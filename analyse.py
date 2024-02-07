@@ -6,6 +6,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
+# Color-scheme
+# rgb(178, 34, 34), rgb(153, 97, 0), rgb(113, 135, 38), rgb(64, 162, 111), rgb(34, 180, 180)
+# firebrick: rgb(178, 34, 34), complementary blue: rgb(34, 180, 180)
+# https://colordesigner.io/gradient-generator/?mode=lch#B22222-22B4B4
+
 # Load dash app
 app = Dash(__name__)
 
@@ -76,8 +81,6 @@ last_365_days = df[(df['Date'] >= start_date_week) & (df['Date'] <= end_date_wee
 # Group by week and sum the values (last 365d)
 weekly_data = last_365_days.groupby(pd.Grouper(key='Date', freq='W-Sun')).agg({'KM': 'sum', 'TSS': 'sum'}).reset_index()
 
-
-
 # Round the values in 'KM' and 'RSS' to integers with 0 decimals
 weekly_data['KM'] = weekly_data['KM'].round(0).astype(int)
 weekly_data['TSS'] = weekly_data['TSS'].round(0).astype(int)
@@ -132,7 +135,7 @@ def update_running_km_table(selected_shoes, remembered_selection):
     return running_km_data.to_dict('records')
 
 # Set the start date
-start_date = pd.to_datetime('2023-01-01')
+start_date = end_date_week - timedelta(days=365)
 
 # Calculate the cumulative sum of 'KM' for each day starting from January 1, 2024, for the trailing 90 days
 cumulative_sum_90_days = []
@@ -196,9 +199,9 @@ todays_ATL = round(todays_ATL, 1)
 todays_load = df_ytd['RSS load'].iloc[-1]
 todays_load = round(todays_load, 2)
 todays_zone_start = df_ytd['W1'].iloc[-1]
-todays_zone_start = int(round(todays_zone_start, 0))
+todays_zone_start = round(todays_zone_start, 0)
 todays_zone_end = df_ytd['W2'].iloc[-1]
-todays_zone_end = int(round(todays_zone_end, 0))
+todays_zone_end = round(todays_zone_end, 0)
 tomorrows_workout = df_ytt['Art'].iloc[-1]
 tomorrows_km = df_ytt['KM'].iloc[-1]
 tomorrows_time = df_ytt['Zeit'].iloc[-1]
@@ -275,34 +278,35 @@ time_marathon = calculate_time(ECOR_M, distance_marathon, rounded_CP_value, m, m
 
 # Plotting the first line chart (tCTL vs rCTL) using Plotly Express
 fig1 = px.line(df_ytd, x='Date', y=['tCTL', 'rCTL'], title=f'tCTL vs rCTL (fig1)',
-               labels={'value': 'CTL'})
+               labels={'value': 'CTL'}, color_discrete_sequence=['#2283B4','firebrick'])
 
 fig1.update_layout(
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
 
-fig1.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="green")
+fig1.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # YTD load comparison
 fig2 = px.line(df_ytd, x='Date', y=['TSS load', 'RSS load'], title=f'YTD load comparison of {current_year} (fig2)',
               labels={'value': 'load', 'variable': 'load'},
-              line_shape='linear', render_mode='svg')
+              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'], range_y=[0.5,2])
 
 fig2.update_layout(
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
+
 fig2.update_xaxes(showgrid=False)
 fig2.update_yaxes(showgrid=False)
 
-fig2.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="green")
+fig2.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # Define the shading ranges
 shading_ranges = [
@@ -310,7 +314,7 @@ shading_ranges = [
     {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 0.8, 'y1': 1, 'color': 'rgba(0, 200, 0,0.5)'},  # lightgreen
     {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1, 'y1': 1.3, 'color': 'rgba(0,255,100,0.5)'},  # darkgreen
     {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.3, 'y1': 1.5, 'color' : 'rgba(255,255,0,0.5)'},  # Yellow
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.5, 'y1': df_ytd[['TSS load', 'RSS load']].max().max(), 'color': 'rgba(255,0,0,0.5)'}  # Red
+    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.5, 'y1': 2, 'color': 'rgba(255,0,0,0.5)'}  # Red
 ]
 
 # Add the shaded regions to the plot
@@ -323,38 +327,39 @@ for shading_range in shading_ranges:
 # Plotting the third line chart FTP vs CP using Plotly Express
 fig3 = px.line(df_ytd, x='Date', y=['FTP', 'CP'], title=f'YTD comparison: CP vs FTP ({current_year}) (fig3)',
               labels={'value': 'CP/FTP', 'variable': 'Metric'},
-              line_shape='linear', render_mode='svg')
+              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'])
 
 fig3.update_layout(
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
 
-fig3.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="green")
+fig3.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # Plotting daily RSS vs TSS
 fig4 = px.bar(df_ytd, x='Date', y=['TSS', 'RSS'], title=f'TSS vs RSS per Run (fig4)', barmode='group', text='Art',
-              labels={'value':'TSS/RSS'})
+              labels={'value':'TSS/RSS'}, color_discrete_sequence=['#2283B4','firebrick'])
 
 fig4.update_layout(
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
 
-fig4.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="green")
+fig4.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # Monthly running progress
-fig5 = px.histogram(df_until_today, x='Year', y='KM', color='Year', title='Yearly Running Volume (fig5)')
+fig5 = px.histogram(df_until_today, x='Year', y='KM', color='Year', color_discrete_sequence=['rgb(34, 180, 180)'])
 
 fig5.update_layout(
+    title='Yearly Running Volume (fig5)',
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2,
     plot_bgcolor="white",    
@@ -367,11 +372,12 @@ fig5.update_layout(
 month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'June', 'July', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 # Create the histogram
-fig6 = px.histogram(df_since_2020, x='Month', y='HM', color='Year', barmode='group', title='Elevation Gain Per Month (fig6)', category_orders={'Month': month_order})
+fig6 = px.histogram(df_since_2020, x='Month', y='HM', color='Year', barmode='group', category_orders={'Month': month_order}, color_discrete_sequence=['rgb(178, 34, 34)', 'rgb(153, 97, 0)', 'rgb(113, 135, 38)', 'rgb(64, 162, 111)', 'rgb(34, 180, 180)'])
 
 fig6.update_layout(
+    title='Elevation Gain Per Month (fig6)',
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2, # gap between bars of adjacent location coordinates
     bargroupgap=0.1, # gap between bars of the same location coordinates
@@ -383,15 +389,14 @@ fig6.update_layout(
 fig6.update_xaxes(tickmode='array', tickvals=list(range(1, 13)), ticktext=month_order)
 
 # Create line chart for the running volume of last 90 and 365 days
-
 # Create a figure with two subplots
 fig8 = make_subplots(specs=[[{"secondary_y": True}]])
 
 # Add traces for Cumulative_Sum_90_Days on the left y-axis
-fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_90_Days'], mode='lines', name='Trailing 90days km'))
+fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_90_Days'], mode='lines', name='Trailing 90days km', line=dict(color='firebrick')),)
 
 # Add traces for Cumulative_Sum_365_Days on the right y-axis
-fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_365_Days'], mode='lines', name='Trailing 365days km'), secondary_y=True)
+fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_365_Days'], mode='lines', name='Trailing 365days km', line=dict(color='rgb(34, 180, 180)')), secondary_y=True)
 
 # Update layout with titles and labels
 fig8.update_layout(title='Trailing 90d and 365d Running Volume (fig8)',
@@ -401,7 +406,7 @@ fig8.update_layout(title='Trailing 90d and 365d Running Volume (fig8)',
                   legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
                   legend_title=None,
                   width=640,  # Set the width of the graph
-                  height=350,  # Set the height of the graph
+                  height=400,  # Set the height of the graph
                   plot_bgcolor="white",
 )
 
@@ -410,11 +415,11 @@ fig8.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_wid
 
 # PWR/HR Graph
 fig9 = px.line(result_df_avg_pwr_hr_42_days, x='Date', y='Cumulative_Avg_pwr_hr_42_Days', title='Avg of pwr/hr for Trailing 42 Days (fig9)',
-              labels={'Cumulative_Avg_pwr_hr_90_Days': 'Avg pwr/hr'})
+              labels={'Cumulative_Avg_pwr_hr_90_Days': 'Avg pwr/hr'}, color_discrete_sequence=['#2283B4'])
 
 fig9.update_layout(
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     yaxis_title='Pwr/Hr',
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -426,63 +431,75 @@ fig9.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_wid
 
 # Weekly Data last 365d
 # Create a Plotly figure
-fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, title='Weekly KM vs RSS (fig11)')
+fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
 
 # Add a bar trace for 'RSS' on the secondary y-axis
 fig11.add_trace(px.line(weekly_data, x='Date', y='TSS', labels={'TSS': 'TSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
 
 fig11.update_layout(
+    title='Weekly KM vs RSS (fig11)',
     yaxis2=dict(title='TSS', overlaying='y', side='right', range=[0, weekly_data['TSS'].max()]),
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white"
 )
 
 # Yearly YTD running goal graph
-fig13 = px.line(merged_df_goal, x='Date', y=['actual', 'goal'], title=f'YTD Progress in {current_year} vs Goal (KM) (fig13)', labels={'value':'KM'})
+fig13 = px.line(merged_df_goal, x='Date', y=['actual', 'goal'],  labels={'value':'KM'}, color_discrete_sequence=['rgb(34, 180, 180)','firebrick'])
 
 fig13.update_layout(
+    title=f'YTD Progress in {current_year} vs Goal (KM) (fig13)',
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
 
 # 2024 monthly kilometer
-fig14 = px.histogram(df_current_year, x='Date', y='KM', barmode='group', title=f'Monthly progress for {current_year} (fig14)')
+fig14 = px.histogram(df_current_year, x='Date', y='KM', barmode='group', color_discrete_sequence=['rgb(34, 180, 180)'])
 
 fig14.update_layout(
+    title=f'Monthly progress for {current_year} (fig14)',
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2, # gap between bars of adjacent location coordinates
     bargroupgap=0.1, # gap between bars of the same location coordinates
     plot_bgcolor="white",    
     yaxis_title='KM',
 )
+fig14.update_xaxes(ticklabelmode='period')
 
 # Yearly YTD running goal graph
-fig15 = px.line(merged_df_goal_complete, x='Date', y=['actual', 'goal'], title=f'Yearly Progress in {current_year} vs Goal (KM) (fig15)', labels={'value':'KM'})
-
+fig15 = go.Figure()
+fig15.add_trace(go.Scatter(x=merged_df_goal_complete['Date'],y=merged_df_goal_complete['goal'],
+    fill=None,
+    mode='lines',
+    line_color='firebrick',
+    ))
+fig15.add_trace(go.Scatter(x=merged_df_goal_complete['Date'],y=merged_df_goal_complete['actual'],
+    fill='tonexty', # fill area between trace0 and trace1
+    mode='lines', line_color='rgb(34,180,180)', fillcolor='rgba(64, 162, 111, 0.3)'),)
 fig15.update_layout(
-    width=1280,  # Set the width of the graph
-    height=640,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
+    title=f'Goal vs actual {current_year} (fig15)',
+    width=1350,  # Set the width of the graph
+    height=750,  # Set the height of the graph
+    showlegend=False,
     plot_bgcolor="white",
 )
+fig15.add_vline(x=f"{today}", line_width=2, line_color="rgb(153, 97, 0)")
 
-fig15.add_vline(x=f"{today}", line_width=1, line_color="green")
 
 # elevation gain per year
-fig16 = px.histogram(df_since_2020, x='Year', y='HM', color='Year', title='Elevation Gain Per Year (fig16)')
+fig16 = px.histogram(df_since_2020, x='Year', y='HM', color='Year', color_discrete_sequence=['rgb(178, 34, 34)', 'rgb(153, 97, 0)', 'rgb(113, 135, 38)', 'rgb(64, 162, 111)', 'rgb(34, 180, 180)'])
 
 fig16.update_layout(
+    title='Elevation Gain Per Year (fig16)',
     width=640,  # Set the width of the graph
-    height=350,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2, # gap between bars of adjacent location coordinates
     bargroupgap=0.1, # gap between bars of the same location coordinates
@@ -490,30 +507,34 @@ fig16.update_layout(
     yaxis_title='HM',
 )
 
+fig16.add_hline(y=10000, line_width=1, line_dash='dash', line_color="firebrick")
+
 # Weekly Data current year
 # Create a Plotly figure
-fig17 = px.bar(weekly_data_current_year, x='Date', y='KM', labels={'KM': 'KM'}, title=f'Weekly KM vs RSS for {current_year} (fig17)')
+fig17 = px.bar(weekly_data_current_year, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
 
 # Add a bar trace for 'RSS' on the secondary y-axis
 fig17.add_trace(px.line(weekly_data_current_year, x='Date', y='TSS', labels={'TSS': 'TSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
 
 fig17.update_layout(
+    title=f'Weekly KM vs RSS for {current_year} (fig17)',
     yaxis2=dict(title='TSS', overlaying='y', side='right', range=[0, weekly_data_current_year['TSS'].max()]),
     width=640,  # Set the width of the graph
-    height=450,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white"
 )
 
 # This year's load
-fig18 = px.line(df_current_year, x='Date', y=['TSS load', 'RSS load'], title=f'YTD load comparison of {current_year} (fig18)',
+fig18 = px.line(df_current_year, x='Date', y=['TSS load', 'RSS load'],
               labels={'value': 'load', 'variable': 'load'},
-              line_shape='linear', render_mode='svg')
+              line_shape='linear', color_discrete_sequence=['rgb(34, 180, 180)','firebrick'], range_y=[0.5,2])
 
 fig18.update_layout(
+    title=f'YTD load comparison of {current_year} (fig18)',
     width=640,  # Set the width of the graph
-    height=450,  # Set the height of the graph
+    height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
@@ -521,7 +542,7 @@ fig18.update_layout(
 fig18.update_xaxes(showgrid=False)
 fig18.update_yaxes(showgrid=False)
 
-fig18.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="green")
+fig18.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # Define the shading ranges
 shading_ranges_current = [
@@ -575,7 +596,7 @@ dcc.Tab(label='Important Values', children=[
             html.Span(f"{todays_zone_start} - {todays_zone_end}", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),        
     ],
-    style={'width': '50%','border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(239, 68, 68, 0.5)'}  # Adjust width as needed
+    style={'width': '50%','border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(178, 34, 34, 0.4)'}  # Adjust width as needed
 ),
     html.Div(
         children=[    
@@ -592,7 +613,7 @@ dcc.Tab(label='Important Values', children=[
                 html.Span(f"{tomorrows_zone_start} - {tomorrows_zone_end}", style={'display': 'inline-block', 'width': '150px'})
           ], style={'display': 'flex', 'align-items': 'baseline'}),  
         ],
-        style={'width': '50%','border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(253, 186, 116, 0.5)'}
+        style={'width': '50%','border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(153, 97, 0, 0.5)'}
         ),
 
    html.Div(
@@ -610,7 +631,7 @@ dcc.Tab(label='Important Values', children=[
             html.Span(f"{todays_load}", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
     ],
-    style={'width': '50%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(94, 234, 212, 0.5)'}  # Adjust width as needed
+    style={'width': '50%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(113, 135, 38, 0.5)'}  # Adjust width as needed
 ),
 
 html.Div(
@@ -636,7 +657,7 @@ html.Div(
             html.Span(f"{rounded_ytd_km_sum_kids_j} km", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
     ],
-    style={'width': '50%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(14, 165, 233, 0.5)'}  # Adjust width as needed
+    style={'width': '50%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(64, 162, 111, 0.5)'}  # Adjust width as needed
 ),
 
 html.Div(
@@ -655,7 +676,7 @@ html.Div(
             html.Span(f"{time_marathon} ({CP_M} W)", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
     ],
-    style={'width': '50%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(217, 70, 239, 0.5)'}  # Adjust width as needed
+    style={'width': '50%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(34, 180, 180, 0.5)'}  # Adjust width as needed
 ),
         ]),
 
