@@ -16,6 +16,12 @@ app = Dash(__name__)
 
 # Load data from Excel file
 df = pd.read_excel("training_data_new.xlsx", sheet_name="2018+", usecols="C:AG")
+df_active_shoes = pd.read_excel('../training.xlsx' , sheet_name="Schuhe", usecols="A")
+df_active_shoes.dropna(inplace=True)
+df_peaks = pd.read_csv("../peaks_projekt/Peaks_Map/peaks_data.csv")
+df_raw_peaks = pd.read_csv("../peaks_projekt/Peaks_Map/peaks_raw_data.csv")
+df_peaks = df_peaks.filter(['name','elevation','gelaufen'])
+df_peaks.index = df_peaks.index +1
 
 # Convert Date and Pace column to datetime and Time and format
 df['Date'] = pd.to_datetime(df['Datum'])
@@ -30,15 +36,19 @@ tomorrow = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
 
 # Creating Different Dataframes
 current_year = pd.to_datetime('today').year
+# Year to Date
 df_ytd = df[(df['Year'] == current_year) & (df['Date'] <= pd.to_datetime('today'))]
-
 df_ytd = df_ytd.copy()
 df_ytd.fillna({'KM':0, 'HFQ':0, 'W1':0, 'W2':0, 'HM':0, 'Pace':0}, inplace=True)
+# Year to Tomorrow
 df_ytt = df[(df['Date'] >= pd.Timestamp(datetime(tomorrow.year, 1, 1))) & (df['Date'] <= tomorrow)]
 df_ytt = df_ytt.copy()  # Explicitly copy the subset of the DataFrame
 df_ytt.fillna({'KM':0, 'W1':0, 'W2':0}, inplace=True)
+# Only including data since 2020
 df_since_2020 = df[df['Year'] >= 2020]
+# Limiting data to today
 df_until_today = df[df['Date'] <= today]
+# Only including data for current year
 df_current_year = df[df['Date'].dt.year == current_year]
 df_current_year_filtered = df_current_year[['Date', 'KM']].copy()
 df_current_year_filtered.fillna({'KM':0}, inplace=True)
@@ -47,6 +57,13 @@ df_current_year_filtered.loc[:, 'actual'] = df_current_year_filtered['KM'].cumsu
 ninety_days_ago = today2 - timedelta(days=90)
 # Filter the dataframe for the last 90 days and excluding future dates
 df_last_90_days = df[(df['Date'] >= ninety_days_ago) & (df['Date'] <= today2)]
+# Calculate the date 7 days ago
+seven_days_ago = today2 - timedelta(days=7)
+# Filter the dataframe for the last 7 days and excluding future dates
+df_last_7_days = df[(df['Date'] >= seven_days_ago) & (df['Date'] <= today2)]# Convert 'Zeit' column to timedelta
+# df_last_7_days['Zeit'] = pd.to_timedelta(df_last_7_days['Zeit'].astype(str))
+df_last_7_days.loc[:, 'Zeit'] = pd.to_timedelta(df_last_7_days['Zeit'].astype(str))
+df_last_7_days.dropna(subset=['Zeit'], inplace=True)
 
 # Define Running Goal for current year
 # Filter data for the last 5 years
@@ -104,8 +121,8 @@ weekly_data_current_year['RSS'] = weekly_data_current_year['RSS'].round(0).astyp
 
 #Schuhdaten
 df_Schuhe = df.groupby('Schuh')['KM'].sum().reset_index()
-active_shoes = ['Adidas Solarglide 5','Adizero Boston 8','HOKA Clifton 8','HOKA Rincon 3 II','Innov-8 Terraultra','Innov-8 Trailfly','Saucony Triumph 21','HOKA Mach 5']
-df_Schuhe = df_Schuhe[df_Schuhe['Schuh'].isin(active_shoes)]
+df_Schuhe = df_Schuhe[df_Schuhe['Schuh'].isin(df_active_shoes['Schuh'])]
+df_Schuhe['KM'] = df_Schuhe['KM'].round(0)
 df_Schuhe = df_Schuhe.sort_values(by='KM', ascending=False)
 df_Schuhe = df_Schuhe.to_dict('records')
 
@@ -138,16 +155,29 @@ result_df_365_days = pd.DataFrame({'Date': pd.date_range(start_date, pd.to_datet
 merged_df = pd.merge(result_df_90_days, result_df_365_days, on='Date', how='outer')
 
 # PWR/HR
-
 # Calculate the cumulative average of 'pwr/hr' for each day starting from January 1, 2024, for the trailing 42 days
 cumulative_avg_pwr_hr_42_days = []
-
 for date in pd.date_range(start_date, pd.to_datetime('today')):
     trailing_42_days_avg_pwr_hr = df[(df['Date'] >= (date - pd.DateOffset(days=41))) & (df['Date'] <= date)]['pwr/hr'].mean()
     cumulative_avg_pwr_hr_42_days.append(trailing_42_days_avg_pwr_hr)
-
 # Create a DataFrame for the results
 result_df_avg_pwr_hr_42_days = pd.DataFrame({'Date': pd.date_range(start_date, pd.to_datetime('today')), 'Cumulative_Avg_pwr_hr_42_Days': cumulative_avg_pwr_hr_42_days})
+# Get today's and yesterday's values
+todays_value = result_df_avg_pwr_hr_42_days['Cumulative_Avg_pwr_hr_42_Days'].iloc[-1]
+yesterdays_value = result_df_avg_pwr_hr_42_days['Cumulative_Avg_pwr_hr_42_Days'].iloc[-2]
+# Compare today's value with yesterday's and store the arrow in a variable
+pwr_hr_arrow = '▲' if todays_value > yesterdays_value else '▼' if todays_value < yesterdays_value else '='
+
+# PWR/HR only Zone2
+df_Z2 = df.copy()
+df_Z2 = df_Z2.dropna(subset=['Art'])
+df_Z2 = df_Z2[df_Z2['Art'].str.contains('Z2')]
+cumulative_Z2_avg_pwr_hr_42_days = []
+for date in pd.date_range(start_date, pd.to_datetime('today')):
+    trailing_Z2_42_days_avg_pwr_hr = df_Z2[(df_Z2['Date'] >= (date - pd.DateOffset(days=41))) & (df_Z2['Date'] <= date)]['pwr/hr'].mean()
+    cumulative_Z2_avg_pwr_hr_42_days.append(trailing_Z2_42_days_avg_pwr_hr)
+# Create a DataFrame for the results
+result_df_avg_Z2_pwr_hr_42_days = pd.DataFrame({'Date': pd.date_range(start_date, pd.to_datetime('today')), 'Cumulative_Z2_Avg_pwr_hr_42_Days': cumulative_Z2_avg_pwr_hr_42_days})
 
 # Changing decimals of numbers in dataframes
 # Rounding the last value in the 'CP' column to 0 decimal places
@@ -165,7 +195,7 @@ YTD_km_data = int(round(df_ytd['KM'].sum()))
 # Rounding trailing 42d avg of Pwr/HR to 2 decimal places
 rounded_pwr_hr_42 = round(result_df_avg_pwr_hr_42_days['Cumulative_Avg_pwr_hr_42_Days'].iloc[-1],2)
 
-# Today's workout
+# Define variables for Dashboard
 todays_workout = df_ytd['Art'].iloc[-1]
 todays_km = df_ytd['KM'].iloc[-1]
 todays_time = df_ytd['Zeit'].iloc[-1]
@@ -178,6 +208,9 @@ todays_HM = int(round(todays_HM, 0))
 todays_ATL = df_ytd['rATL'].iloc[-1]
 todays_ATL = round(todays_ATL, 1)
 todays_load = df_ytd['RSS load'].iloc[-1]
+todays_pwr_hr = df_ytd['pwr/hr'].iloc[-1]
+todays_pwr_hr = round(todays_pwr_hr, 2)
+yesterdays_load = df_ytd['RSS load'].iloc[-2]
 todays_load = round(todays_load, 2)
 todays_zone_start = df_ytd['W1'].iloc[-1]
 todays_zone_start = int(round(todays_zone_start, 0))
@@ -193,6 +226,37 @@ tomorrows_zone_end = df_ytt['W2'].iloc[-1]
 tomorrows_zone_end = int(round(tomorrows_zone_end, 0))
 max_CP = df_ytd['CP'].max()
 max_CP = int(round(max_CP, 0))
+max_pwr_hr = result_df_avg_pwr_hr_42_days['Cumulative_Avg_pwr_hr_42_Days'].max()
+max_pwr_hr = round(max_pwr_hr, 2)
+this_weeks_KM = weekly_data['KM'].iloc[-1]
+this_weeks_RSS = weekly_data['RSS'].iloc[-1]
+last_weeks_KM = weekly_data['KM'].iloc[-2]
+last_weeks_RSS = weekly_data['RSS'].iloc[-2]
+last_7d_KM = df_last_7_days['KM'].sum()
+last_7d_KM = int(round(last_7d_KM, 0))
+last_7d_RSS = df_last_7_days['RSS'].sum()
+last_7d_RSS = int(round(last_7d_RSS, 0))
+last_7d_time = df_last_7_days['Zeit'].sum()
+weekly_average_KM = weekly_data['KM'].mean()
+weekly_average_RSS = weekly_data['RSS'].mean()
+peaks_completed = len(df_peaks)
+peaks_total = len(df_raw_peaks)
+peaks_percentage = (peaks_completed / peaks_total)*100
+peaks_percentage = round(peaks_percentage, 2)
+
+# fix last 7day time
+hours_7d = last_7d_time.seconds // 3600
+minutes_7d = (last_7d_time.seconds % 3600) // 60
+seconds_7d = last_7d_time.seconds % 60
+last_7d_time = f"{hours_7d:02d}:{minutes_7d:02d}:{seconds_7d:02d}"
+
+# Define arrows
+load_arrow = '▲' if todays_load > yesterdays_load else '▼' if todays_load < yesterdays_load else '='
+weekly_arrow_KM = '▲' if last_weeks_KM > weekly_average_KM else '▼' if last_weeks_KM < weekly_average_KM else '='
+arrow_7d_KM = '▲' if last_7d_KM > weekly_average_KM else '▼' if last_7d_KM < weekly_average_KM else '='
+weekly_arrow_RSS = '▲' if last_weeks_RSS > weekly_average_RSS else '▼' if last_weeks_RSS < weekly_average_RSS else '='
+arrow_7d_RSS = '▲' if last_7d_RSS > weekly_average_RSS else '▼' if last_7d_RSS < weekly_average_RSS else '='
+
 
 # handling today's Pace
 if todays_pace != 0:
@@ -238,7 +302,7 @@ CP_M = int(CP_M)
 # weight
 m = 67
 
-# ECOR
+# ECOR for each distance
 ECOR_5k = 1.049
 ECOR_10k = 1.060
 ECOR_HM = 1.060
@@ -273,7 +337,7 @@ fig1 = px.line(df_ytd, x='Date', y=['tCTL', 'rCTL'], title=f'tCTL vs rCTL (fig1)
                labels={'value': 'CTL'}, color_discrete_sequence=['#2283B4','firebrick'])
 
 fig1.update_layout(
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -284,13 +348,14 @@ fig1.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(1
 
 # RSS per run and CTL
 fig1neu = px.bar(df_last_90_days, x='Date', y=['RSS'], barmode='group', text='Art',
-              labels={'value':'RSS'}, color_discrete_sequence=['#2283B4','firebrick'])
+              labels={'value':'RSS'}, color_discrete_sequence=['#2283B4'])
 
-fig1neu.add_trace(go.Scatter(x=df_last_90_days['Date'], y=df_last_90_days['rCTL'], mode='lines', name='CTL', line=dict(color='firebrick')))
+fig1neu.add_trace(go.Scatter(x=df_last_90_days['Date'], y=df_last_90_days['rCTL'], mode='lines', line_width=3, name='CTL', line=dict(color='firebrick')))
+fig1neu.add_trace(go.Scatter(x=df_last_90_days['Date'], y=df_last_90_days['rATL'], mode='lines', line_width=3, name='ATL', line=dict(color='rgb(34, 180, 180)')))
 
 fig1neu.update_layout(
     title='RSS and CTL for last 90d (fig1neu)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -303,7 +368,7 @@ fig2 = px.line(df_ytd, x='Date', y=['TSS load', 'RSS load'], title=f'YTD load co
               line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'], range_y=[0.5,2])
 
 fig2.update_layout(
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -338,7 +403,7 @@ fig2neu = px.line(df_last_90_days, x='Date', y=['RSS load'],
 
 fig2neu.update_layout(
     title='load for last 90d (fig2neu)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -368,7 +433,7 @@ fig3 = px.line(df_ytd, x='Date', y=['FTP', 'CP'], title=f'YTD comparison: CP vs 
               line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'])
 
 fig3.update_layout(
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -382,7 +447,7 @@ fig4 = px.bar(df_ytd, x='Date', y=['TSS', 'RSS'], title=f'TSS vs RSS per Run (fi
               labels={'value':'TSS/RSS'}, color_discrete_sequence=['#2283B4','firebrick'])
 
 fig4.update_layout(
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -396,7 +461,7 @@ fig5 = px.histogram(df_until_today, x='Year', y='KM', color='Year', color_discre
 
 fig5.update_layout(
     title='Yearly Running Volume (fig5)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2,
@@ -414,7 +479,7 @@ fig6 = px.histogram(df_since_2020, x='Month', y='HM', color='Year', barmode='gro
 
 fig6.update_layout(
     title='Elevation Gain Per Month (fig6)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2, # gap between bars of adjacent location coordinates
@@ -437,26 +502,28 @@ fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_90_Da
 fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_365_Days'], mode='lines', name='Trailing 365days km', line=dict(color='rgb(34, 180, 180)')), secondary_y=True)
 
 # Update layout with titles and labels
-fig8.update_layout(title='Trailing 90d and 365d Running Volume (fig8)',
-                  xaxis_title='Date',
-                  yaxis_title='Trailing 90 Days',
-                  yaxis2_title='Trailing 365 Days',
-                  legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-                  legend_title=None,
-                  width=640,  # Set the width of the graph
-                  height=400,  # Set the height of the graph
-                  plot_bgcolor="white",
+fig8.update_layout(
+    title='Trailing 90d and 365d Running Volume (fig8)',
+    xaxis_title='Date',
+    yaxis_title='Trailing 90 Days',
+    yaxis2_title='Trailing 365 Days',
+    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
+    legend_title=None,
+    width=650,  # Set the width of the graph
+    height=400,  # Set the height of the graph
+    plot_bgcolor="white",
 )
 
 # add shaded region
 fig8.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
 
 # PWR/HR Graph
-fig9 = px.line(result_df_avg_pwr_hr_42_days, x='Date', y='Cumulative_Avg_pwr_hr_42_Days', title='Avg of pwr/hr for Trailing 42 Days (fig9)',
+fig9 = px.line(result_df_avg_pwr_hr_42_days, x='Date', y='Cumulative_Avg_pwr_hr_42_Days',
               labels={'Cumulative_Avg_pwr_hr_90_Days': 'Avg pwr/hr'}, color_discrete_sequence=['#2283B4'])
 
 fig9.update_layout(
-    width=640,  # Set the width of the graph
+    title='Avg of pwr/hr for Trailing 42 Days (fig9)',
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     yaxis_title='Pwr/Hr',
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
@@ -467,17 +534,36 @@ fig9.update_layout(
 # add shaded region
 fig9.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
 
+# PWR/HR Zone2 
+fig10 = px.line(result_df_avg_Z2_pwr_hr_42_days, x='Date', y='Cumulative_Z2_Avg_pwr_hr_42_Days',
+              labels={'Cumulative_Z2_Avg_pwr_hr_90_Days': 'Avg pwr/hr Z2'}, color_discrete_sequence=['#2283B4'])
+
+fig10.update_layout(
+    title='Avg of pwr/hr for Trailing 42 Days only Zone2 (fig10)',
+    width=650,  # Set the width of the graph
+    height=400,  # Set the height of the graph
+    yaxis_title='Pwr/Hr',
+    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
+    legend_title=None,
+    plot_bgcolor="white",
+)
+
+# add shaded region
+fig10.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
+
 # Weekly Data last 365d
 # Create a Plotly figure
 fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
 
 # Add a bar trace for 'RSS' on the secondary y-axis
-fig11.add_trace(px.line(weekly_data, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
+fig11.add_trace(px.scatter(weekly_data, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
 
+ymax1 = weekly_data['KM'].max()*1.10
 fig11.update_layout(
     title='Weekly KM vs RSS (fig11)',
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, weekly_data['RSS'].max()]),
-    width=640,  # Set the width of the graph
+    yaxis=dict(range=[0, ymax1]),
+    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax1*5.44]),
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -489,7 +575,7 @@ fig13 = px.line(merged_df_goal, x='Date', y=['actual', 'goal'],  labels={'value'
 
 fig13.update_layout(
     title=f'YTD Progress in {current_year} vs Goal (KM) (fig13)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -501,7 +587,7 @@ fig14 = px.histogram(df_current_year, x='Date', y='KM', barmode='group', color_d
 
 fig14.update_layout(
     title=f'Monthly Volumes for {current_year} (fig14)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2, # gap between bars of adjacent location coordinates
@@ -523,7 +609,7 @@ fig15.add_trace(go.Scatter(x=merged_df_goal_complete['Date'],y=merged_df_goal_co
     mode='lines', line_color='rgb(34,180,180)', fillcolor='rgba(64, 162, 111, 0.3)'),)
 fig15.update_layout(
     title=f'Goal vs actual {current_year} (fig15)',
-    width=1300,  # Set the width of the graph
+    width=1280,  # Set the width of the graph
     height=750,  # Set the height of the graph
     showlegend=False,
     plot_bgcolor="white",
@@ -536,7 +622,7 @@ fig16 = px.histogram(df_since_2020, x='Year', y='HM', color='Year', color_discre
 
 fig16.update_layout(
     title='Elevation Gain Per Year (fig16)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     showlegend=False,
     bargap=0.2, # gap between bars of adjacent location coordinates
@@ -552,12 +638,14 @@ fig16.add_hline(y=10000, line_width=1, line_dash='dash', line_color="firebrick")
 fig17 = px.bar(weekly_data_current_year, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
 
 # Add a bar trace for 'RSS' on the secondary y-axis
-fig17.add_trace(px.line(weekly_data_current_year, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
+fig17.add_trace(px.scatter(weekly_data_current_year, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
 
+ymax2 = weekly_data_current_year['KM'].max()*1.10
 fig17.update_layout(
     title=f'Weekly KM vs RSS for {current_year} (fig17)',
-    yaxis2=dict(title='TSS', overlaying='y', side='right', range=[0, weekly_data_current_year['RSS'].max()]),
-    width=640,  # Set the width of the graph
+    yaxis=dict(range=[0, ymax2]),
+    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax2*5.44]),
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -568,11 +656,12 @@ fig17.add_vline(x=f"{today}", line_width=3, line_dash="dash", line_color="rgb(15
 # This year's load
 fig18 = px.line(df_current_year, x='Date', y=['TSS load', 'RSS load'],
               labels={'value': 'load', 'variable': 'load'},
-              line_shape='linear', color_discrete_sequence=['rgb(34, 180, 180)','firebrick'], range_y=[0.5,2])
+              line_shape='linear', color_discrete_sequence=['rgb(34, 180, 180)','firebrick'])
 
 fig18.update_layout(
     title=f'Load comparison of {current_year} (fig18)',
-    width=640,  # Set the width of the graph
+    yaxis=dict(range=[0.5,2]),
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -582,7 +671,6 @@ fig18.update_xaxes(showgrid=False)
 fig18.update_yaxes(showgrid=False)
 
 fig18.add_vline(x=f"{today}", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-
 
 # Define the shading ranges
 shading_ranges_current = [
@@ -600,14 +688,25 @@ for shading_range_current in shading_ranges_current:
                   y0=shading_range_current['y0'], y1=shading_range_current['y1'],
                   fillcolor=shading_range_current['color'], opacity=0.5, layer='below', line_width=0)
 
-
-# Violin Plot for RSS/TSS
-
-fig19 = px.box(df_ytd, y='RSS/TSS', points='all', color='Art', color_discrete_sequence=['rgb(178, 34, 34)', 'rgb(153, 97, 0)', 'rgb(113, 135, 38)'])
+# Box Plot for RSS/TSS
+df_ytd_jan28 = df_ytd[df_ytd['Date'] >= '2024-01-28']
+fig19 = px.box(df_ytd_jan28, y='RSS/TSS', points='all', color='Art', color_discrete_sequence=['rgb(178, 34, 34)','rgb(34, 180, 180)'])
 
 fig19.update_layout(
     title='RSS/TSS (fig19)',
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
+    height=400,  # Set the height of the graph
+    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
+    legend_title=None,
+    plot_bgcolor="white",
+)
+
+# RRS/TSS Power abhängig? Scatter
+fig19_1 = px.scatter(df_ytd_jan28, y='RSS/TSS', x='Watt', trendline='ols', color_discrete_sequence=['rgb(178, 34, 34)','rgb(34, 180, 180)'])
+
+fig19_1.update_layout(
+    title='RSS/TSS (fig19_1)',
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -619,7 +718,7 @@ fig20 = px.line(df_ytd, x='Date', y=['rCTL', '42d avg'], title=f'rCTL vs 42d avg
                labels={'value': 'CTL'}, color_discrete_sequence=['#2283B4','firebrick'])
 
 fig20.update_layout(
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -634,7 +733,7 @@ fig21 = px.line(df_ytd, x='Date', y=['TSS load', 'load (avg)'], title=f'YTD load
               line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'])
 
 fig21.update_layout(
-    width=640,  # Set the width of the graph
+    width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
@@ -662,168 +761,231 @@ for shading_range in shading_ranges:
                   y0=shading_range['y0'], y1=shading_range['y1'],
                   fillcolor=shading_range['color'], opacity=0.5, layer='below', line_width=0)
 
+# Activity Graph
+df_last_90_days.fillna({'KM':0, 'RSS':0, 'HFQ':0, 'W1':0, 'W2':0, 'HM':0, 'Pace':0}, inplace=True)
+fig23 = px.scatter(df_last_90_days, x='Date', y='KM', size='RSS', hover_data=['Art','Date','KM','RSS'])
+first_of_month = df_last_90_days[df_last_90_days['Date'].dt.day == 1]['Date'].tolist()
+fig23.update_layout(
+    height=75,  # Set the height of the graph
+    width=1240,
+    plot_bgcolor="white",
+    xaxis_title=None,
+    yaxis_title=None,
+    xaxis=dict(showticklabels=False, gridcolor='rgb(34, 180, 180)', gridwidth=2, tickvals=first_of_month),
+    yaxis=dict(showticklabels=False, showgrid=False, range=[0, None]),
+    margin=dict(l=0, r=0, b=0, t=0)
+)
+fig23.update_traces(marker_color='firebrick')
+
+
 # DASHBOARD
 
 app.layout = html.Div([
     dcc.Tabs([
 # Tab 1 - Wertetabelle        
 dcc.Tab(label='Important Values', children=[
-    
-#   html.H2(f"Today's Workout ({today})"),
+    html.Div(
+        children=[
+            dcc.Graph(figure=fig23, config={'displayModeBar': False})
+        ],
+        style={'display':'inline-block', 'width':'1240px', 'padding-top':'10px', 'padding-bottom':'10px', 'margin': '10px', 'margin-top': '20px'},
+    ),
+        
     html.Div(
     children=[    
         html.P(children=[
-            html.Span("Today's workout: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Today's run: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_workout}", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Distance:", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Distance:"), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_km} km", style={'display': 'inline-block', 'width': '150px'}),
         ], style={'display': 'flex', 'align-items': 'baseline'}),
+
         html.P(children=[
-            html.Span("Duration: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Duration: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_time}", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Avg Pace: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Avg Pace: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{formatted_todays_pace}", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
+
         html.P(children=[
-            html.Span("Avg Power: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Avg Power: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_watt} W", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Avg HR: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Avg HR: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_HFQ}", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
+
         html.P(children=[
-            html.Span("Elevation Gain: ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{todays_HM} m", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Zone (W)", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Pwr/Hr: "), style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(f"{todays_pwr_hr}", style={'display': 'inline-block', 'width': '150px'}),
+            html.Span(html.B("Zone (W)"), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_zone_start} - {todays_zone_end}", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),        
     ],
-    style={'display':'inline-block','width':'45%','border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(178, 34, 34, 0.4)'}  # Adjust width as needed
+    style={'display':'inline-block','width':'590px','border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin': '10px', 'background-color': 'rgba(178, 34, 34, 0.4)'}  # Adjust width as needed
 ),
 
     html.Div(
     children=[    
         html.P(children=[
-            html.Span("Kilometers YTD: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Kilometers YTD: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{YTD_km_data} km", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Elevation gain YTD: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Elevation gain YTD: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{YTD_HM_data} m", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
 
         html.P(children=[
-            html.Span(f"{current_year} goal: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B(f"{current_year} goal: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{running_goal} km", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("KM with Kids: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("KM with Kids: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{rounded_sum_kids} km", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
 
         html.P(children=[
-            html.Span(f"Δ to {current_year} goal: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B(f"Δ to {current_year} goal: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_goal_difference} km", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span(f"KM with Kids {current_year}: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B(f"KM with Kids {current_year}: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{rounded_ytd_km_sum_kids_j} km", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
+
         html.P(children=[
-            html.Span("Today's CP:", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{rounded_CP_value} W", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Max CP YTD:", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{max_CP} W", style={'display': 'inline-block', 'width': '150px'})
+            html.Span(html.B("Today's CP:"), style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(f"{rounded_CP_value} W  ({max_CP} W)", style={'display': 'inline-block', 'width': '150px'}),
+            html.Span(html.B("Peaks:"), style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(f"{peaks_completed} / {peaks_total} - {peaks_percentage}%", style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
     ],
-    style={'display':'inline-block','width': '45%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(64, 162, 111, 0.5)'}  # Adjust width as needed
+    style={'display':'inline-block','width': '590px', 'border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin': '10px', 'background-color': 'rgba(64, 162, 111, 0.5)'}  # Adjust width as needed
 ),
 
     html.Div(
         children=[    
             html.P(children=[
-                html.Span("Tomorrow's workout: ", style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(html.B("Tomorrow's run: "), style={'display': 'inline-block', 'width': '200px'}),
                 html.Span(f"{tomorrows_workout}", style={'display': 'inline-block', 'width': '150px'}),
-                html.Span("Tomorrow's Distance:", style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(html.B("Distance:"), style={'display': 'inline-block', 'width': '200px'}),
                 html.Span(f"{tomorrows_km} km", style={'display': 'inline-block', 'width': '150px'}),
             ], style={'display': 'flex', 'align-items': 'baseline'}),
+
             html.P(children=[
-                html.Span("Tomorrow's duration: ", style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(html.B("Duration: "), style={'display': 'inline-block', 'width': '200px'}),
                 html.Span(f"{tomorrows_time}", style={'display': 'inline-block', 'width': '150px'}),
-                html.Span("Zone (W)", style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(html.B("Zone (W)"), style={'display': 'inline-block', 'width': '200px'}),
                 html.Span(f"{tomorrows_zone_start} - {tomorrows_zone_end}", style={'display': 'inline-block', 'width': '150px'})
           ], style={'display': 'flex', 'align-items': 'baseline'}),  
         ],
-        style={'display':'inline-block','width': '45%','border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(153, 97, 0, 0.5)'}
+        style={'display':'inline-block','width': '590px','border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin': '10px', 'background-color': 'rgba(153, 97, 0, 0.5)'}
         ),
 
-   html.Div(
+    html.Div(
     children=[    
         html.P(children=[
-            html.Span("Today's CTL: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Today's CTL: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{rounded_rCTL_value}", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Pwr/Hr (ø 42 d): ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{rounded_pwr_hr_42}", style={'display': 'inline-block', 'width': '150px'})
+            html.Span(html.B("Pwr/Hr (ø 42 d): "), style={'display': 'inline-block', 'width': '200px'}),
+            html.Span([f"{rounded_pwr_hr_42} ", html.Span(pwr_hr_arrow, style={'fontSize': '0.8em'}), f" ({max_pwr_hr})"], style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
+
         html.P(children=[
-            html.Span("Today's ATL: ", style={'display': 'inline-block', 'width': '200px'}),
+            html.Span(html.B("Today's ATL: "), style={'display': 'inline-block', 'width': '200px'}),
             html.Span(f"{todays_ATL}", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Today's load: ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{todays_load}", style={'display': 'inline-block', 'width': '150px'})
+            html.Span(html.B("Today's load: "), style={'display': 'inline-block', 'width': '200px'}),
+            html.Span([f"{todays_load} ", html.Span(load_arrow, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'})
         ], style={'display': 'flex', 'align-items': 'baseline'}),
     ],
-    style={'display':'inline-block','width': '45%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(113, 135, 38, 0.5)'}  # Adjust width as needed
+    style={'display':'inline-block','width': '590px', 'border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin': '10px', 'background-color': 'rgba(113, 135, 38, 0.5)'}  # Adjust width as needed
 ),
 
 html.Div(
-    children=[    
-        html.P(children=[
-            html.Span("5k: ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{time_5k} ({CP_5k} W)", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("10k: ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{time_10k} ({CP_10k} W)", style={'display': 'inline-block', 'width': '150px'})
-        ], style={'display': 'flex', 'align-items': 'baseline'}),
+    style={'display': 'flex', 'align-items': 'flex-start'},
+    children=[
+    html.Div(children=[
+    html.Div(
+        children=[    
+            html.P(children=[
+                html.Span(html.B("5k: "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(f"{time_5k} ({CP_5k} W)", style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B("10k: "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(f"{time_10k} ({CP_10k} W)", style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),
 
-        html.P(children=[
-            html.Span("Half Marathon: ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{time_HM} ({CP_HM} W)", style={'display': 'inline-block', 'width': '150px'}),
-            html.Span("Marathon: ", style={'display': 'inline-block', 'width': '200px'}),
-            html.Span(f"{time_marathon} ({CP_M} W)", style={'display': 'inline-block', 'width': '150px'})
-        ], style={'display': 'flex', 'align-items': 'baseline'}),
-    ],
-    style={'width': '45%', 'border': '1px solid black', 'padding': '10px', 'margin': '10px', 'background-color': 'rgba(34, 180, 180, 0.5)'}  # Adjust width as needed
+            html.P(children=[
+                html.Span(html.B("Half Marathon: "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(f"{time_HM} ({CP_HM} W)", style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B("Marathon: "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span(f"{time_marathon} ({CP_M} W)", style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),
+        ],
+        style={'width':'590px','border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin':'10px', 'background-color': 'rgba(34, 180, 180, 0.5)'}  # Adjust width as needed
+),      
+
+    html.Div(
+        children=[    
+            html.P(children=[
+                html.Span(html.B("Last Week's KM: "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{last_weeks_KM} ", html.Span(weekly_arrow_KM, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B("Last Week's RSS: "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{last_weeks_RSS} ", html.Span(weekly_arrow_RSS, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),
+            
+            html.P(html.Span(), style={'borderBottom': '1px solid black'}),
+
+            html.P(children=[
+                html.Span(html.B("Last 7d KM:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{last_7d_KM} ", html.Span(arrow_7d_KM, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B("Last 7d RSS:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{last_7d_RSS} ", html.Span(arrow_7d_RSS, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'}),
+            ], style={'display': 'flex', 'align-items': 'baseline'}),
+
+            html.P(children=[
+                html.Span(html.B("Last 7d time:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{last_7d_time}"], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B(" "), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([" "], style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),            
+            
+        ],
+        style={'width':'590px','border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin':'10px', 'background-color': 'rgba(178, 34, 34, 0.4)'}  # Adjust width as needed
+),],
 ),
 
-html.Div(
-    style={'width': '45%', 'margin': '10px', 'border': '1px solid black', 'margin-top':'20px', 'padding': '10px'},  # Adjust width as needed
-    children=[    
-    dash_table.DataTable(
-        id='running-km-table',
-        columns=[
-        {'name': 'Schuh', 'id': 'Schuh'},
-        {'name': 'Total Running KM', 'id': 'KM'},
-    ],
-    data=df_Schuhe,
-    style_table={
-        'width': '85%',
-        'margin': '20px',
-        'border': 'none',
-    },
-    style_cell={
-        'textAlign': 'left',
-        'whiteSpace': 'normal',
-        'overflow': 'hidden',
-        'textOverflow': 'ellipsis',
-        'border': 'none',
-    },
-    style_data_conditional=[
-        {
-            'if': {'column_id': 'KM', 'filter_query': '{KM} > 750'},
-            'backgroundColor': 'red',
-            'color': 'white',
+ html.Div(
+        children=[    
+        dash_table.DataTable(
+            id='running-km-table',
+            columns=[
+            {'name': 'Schuh', 'id': 'Schuh'},
+            {'name': 'Total Running KM', 'id': 'KM'},
+        ],
+        data=df_Schuhe,
+        style_table={
+            'width': '99%',
+            'border': 'none',
+            'margin': '5px',
         },
-        {
-            'if': {'column_id': 'KM', 'filter_query': '{KM} > 500 and {KM} <= 750'},
-            'backgroundColor': 'yellow',
+        style_header={
+            'backgroundColor': 'rgba(34, 180, 180, 0.5)',
+            'color': 'black',
+            'fontWeight': 'bold'
         },
-    ],),
-    ],
-    
-),
-        ]),
+        style_cell={
+            'textAlign': 'left',
+            'border': 'none',
+        },
+        style_data_conditional=[
+            {
+                'if': {'column_id': 'KM', 'filter_query': '{KM} > 750'},
+                'backgroundColor': 'red',
+                'color': 'white',
+            },
+            {
+                'if': {'column_id': 'KM', 'filter_query': '{KM} > 500 and {KM} <= 750'},
+                'backgroundColor': 'yellow',
+            },
+        ],),
+        ],    
+        style={'width':'590px','display':'inline-block', 'align-items': 'flex-start', 'margin': '10px', 'padding-left': '10px', 'padding-right': '10px'}  # Adjust width as needed
+),]),
+]),
 
 # Tab 2 - Power Values
 dcc.Tab(label='Power-based Figures', children=[
@@ -843,13 +1005,18 @@ dcc.Tab(label='Power-based Figures', children=[
             # pwr/hr
             html.Div(dcc.Graph(figure=fig9, config={'displayModeBar': False})),
             # rss/tss
-            html.Div(dcc.Graph(figure=fig19, config={'displayModeBar': False})),
+            html.Div(dcc.Graph(figure=fig10, config={'displayModeBar': False})),
         ], style={'display': 'flex'}),
         html.Div([
             # CTL vs 42d avg
             html.Div(dcc.Graph(figure=fig20, config={'displayModeBar': False})),
             # rss/tss
             html.Div(dcc.Graph(figure=fig21, config={'displayModeBar': False})),
+        ], style={'display': 'flex'}),
+        html.Div([
+            # CTL vs 42d avg
+            html.Div(dcc.Graph(figure=fig19, config={'displayModeBar': False})),
+            html.Div(dcc.Graph(figure=fig19_1, config={'displayModeBar': False})),
         ], style={'display': 'flex'}),
         html.Div([
             # CTL und RSS
@@ -903,11 +1070,33 @@ dcc.Tab(label=f'{current_year}', children=[
         dcc.Tab(label='Peaks Map', children=[
             html.Div([
                 html.Iframe(
-                    srcDoc=open('peaks_progress.html', 'r').read(),
+                    srcDoc=open('../peaks_projekt/Peaks_Map/peaks_progress.html', 'r').read(),
                     width='100%',
-                    height='700px',
+                    height='650px',
                 ),
             ]),
+            html.Div(
+    children=[    
+        dash_table.DataTable(
+            id='peaks-table',
+            columns=[
+                {'name': '#', 'id': 'index'},
+                {'name': 'Peak', 'id': 'name'},
+                {'name': 'Elevation', 'id': 'elevation'},
+                {'name': 'Completed', 'id': 'gelaufen'}
+            ],
+            data=df_peaks.reset_index().to_dict('records'),
+            style_table={
+            'width': '50%',
+            'border': 'none',
+            'margin': '50px',
+        },             
+            style_header={
+            'backgroundColor': 'rgba(178, 34, 34, 0.5)',
+            'color': 'black',
+            'fontWeight': 'bold'
+        },)
+            ])
         ]),
     ]),
 ])    
