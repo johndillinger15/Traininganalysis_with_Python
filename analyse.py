@@ -1,5 +1,4 @@
 from dash import Dash, html, dcc, dash_table
-from dash.dependencies import Input, Output, State
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,7 +14,7 @@ from datetime import datetime, timedelta
 app = Dash(__name__)
 
 # Load data from Excel file
-df = pd.read_excel("training_data_new.xlsx", sheet_name="2018+", usecols="C:AG")
+df = pd.read_excel("../training.xlsx", sheet_name="2018+", usecols="C:X")
 df_active_shoes = pd.read_excel('../training.xlsx' , sheet_name="Schuhe", usecols="A")
 df_active_shoes.dropna(inplace=True)
 df_peaks = pd.read_csv("../peaks_projekt/Peaks_Map/peaks_data.csv")
@@ -55,8 +54,10 @@ df_current_year_filtered.fillna({'KM':0}, inplace=True)
 df_current_year_filtered.loc[:, 'actual'] = df_current_year_filtered['KM'].cumsum()
 # Calculate the date 90 days ago
 ninety_days_ago = today2 - timedelta(days=90)
+one_year_ago = today2 - timedelta(days=365)
 # Filter the dataframe for the last 90 days and excluding future dates
 df_last_90_days = df[(df['Date'] >= ninety_days_ago) & (df['Date'] <= today2)]
+df_last_365_days = df[(df['Date'] >= one_year_ago) & (df['Date'] <= today2)]
 # Calculate the date 7 days ago
 seven_days_ago = today2 - timedelta(days=7)
 # Filter the dataframe for the last 7 days and excluding future dates
@@ -64,7 +65,6 @@ df_last_7_days = df[(df['Date'] >= seven_days_ago) & (df['Date'] <= today2)]# Co
 # df_last_7_days['Zeit'] = pd.to_timedelta(df_last_7_days['Zeit'].astype(str))
 df_last_7_days.loc[:, 'Zeit'] = pd.to_timedelta(df_last_7_days['Zeit'].astype(str))
 df_last_7_days.dropna(subset=['Zeit'], inplace=True)
-
 # Define Running Goal for current year
 # Filter data for the last 5 years
 last_5_years_df = df[(df['Year'] >= current_year - 5) & (df['Year'] < current_year - 0)]
@@ -168,26 +168,15 @@ yesterdays_value = result_df_avg_pwr_hr_42_days['Cumulative_Avg_pwr_hr_42_Days']
 # Compare today's value with yesterday's and store the arrow in a variable
 pwr_hr_arrow = '▲' if todays_value > yesterdays_value else '▼' if todays_value < yesterdays_value else '='
 
-# PWR/HR only Zone2
-df_Z2 = df.copy()
-df_Z2 = df_Z2.dropna(subset=['Art'])
-df_Z2 = df_Z2[df_Z2['Art'].str.contains('Z2')]
-cumulative_Z2_avg_pwr_hr_42_days = []
-for date in pd.date_range(start_date, pd.to_datetime('today')):
-    trailing_Z2_42_days_avg_pwr_hr = df_Z2[(df_Z2['Date'] >= (date - pd.DateOffset(days=41))) & (df_Z2['Date'] <= date)]['pwr/hr'].mean()
-    cumulative_Z2_avg_pwr_hr_42_days.append(trailing_Z2_42_days_avg_pwr_hr)
-# Create a DataFrame for the results
-result_df_avg_Z2_pwr_hr_42_days = pd.DataFrame({'Date': pd.date_range(start_date, pd.to_datetime('today')), 'Cumulative_Z2_Avg_pwr_hr_42_Days': cumulative_Z2_avg_pwr_hr_42_days})
-
 # Changing decimals of numbers in dataframes
 # Rounding the last value in the 'CP' column to 0 decimal places
 rounded_CP_value = int(round(df_ytd['CP'].iloc[-1], 0))
 
 # Rounding the last value in the 'RSS load' column to 2 decimal places
-rounded_load_value= round(df_ytd['RSS load'].iloc[-1], 2)
+rounded_load_value= round(df_ytd['load'].iloc[-1], 2)
 
 # Rounding the last value in the 'rCTL' column to 1 decimal place
-rounded_rCTL_value= round(df_ytd['rCTL'].iloc[-1], 1)
+rounded_rCTL_value= round(df_ytd['CTL'].iloc[-1], 1)
 
 # Rounding the trailing 90d km value to 0 decimal place
 YTD_km_data = int(round(df_ytd['KM'].sum()))
@@ -198,6 +187,7 @@ rounded_pwr_hr_42 = round(result_df_avg_pwr_hr_42_days['Cumulative_Avg_pwr_hr_42
 # Define variables for Dashboard
 todays_workout = df_ytd['Art'].iloc[-1]
 todays_km = df_ytd['KM'].iloc[-1]
+todays_km = round(todays_km, 2)
 todays_time = df_ytd['Zeit'].iloc[-1]
 todays_pace = df_ytd['Pace'].iloc[-1]
 todays_watt = df_ytd['Watt'].iloc[-1]
@@ -205,12 +195,12 @@ todays_HFQ = df_ytd['HFQ'].iloc[-1]
 todays_HFQ = int(round(todays_HFQ, 0))
 todays_HM = df_ytd['HM'].iloc[-1]
 todays_HM = int(round(todays_HM, 0))
-todays_ATL = df_ytd['rATL'].iloc[-1]
+todays_ATL = df_ytd['ATL'].iloc[-1]
 todays_ATL = round(todays_ATL, 1)
-todays_load = df_ytd['RSS load'].iloc[-1]
+todays_load = df_ytd['load'].iloc[-1]
 todays_pwr_hr = df_ytd['pwr/hr'].iloc[-1]
 todays_pwr_hr = round(todays_pwr_hr, 2)
-yesterdays_load = df_ytd['RSS load'].iloc[-2]
+yesterdays_load = df_ytd['load'].iloc[-2]
 todays_load = round(todays_load, 2)
 todays_zone_start = df_ytd['W1'].iloc[-1]
 todays_zone_start = int(round(todays_zone_start, 0))
@@ -233,7 +223,7 @@ this_weeks_RSS = weekly_data['RSS'].iloc[-1]
 last_weeks_KM = weekly_data['KM'].iloc[-2]
 last_weeks_RSS = weekly_data['RSS'].iloc[-2]
 last_7d_KM = df_last_7_days['KM'].sum()
-last_7d_KM = int(round(last_7d_KM, 0))
+last_7d_KM_rounded = int(round(last_7d_KM, 0))
 last_7d_RSS = df_last_7_days['RSS'].sum()
 last_7d_RSS = int(round(last_7d_RSS, 0))
 last_7d_time = df_last_7_days['Zeit'].sum()
@@ -243,12 +233,24 @@ peaks_completed = len(df_peaks)
 peaks_total = len(df_raw_peaks)
 peaks_percentage = (peaks_completed / peaks_total)*100
 peaks_percentage = round(peaks_percentage, 2)
+longrun_7d_km = df_last_7_days['KM'].max()
 
-# fix last 7day time
-hours_7d = last_7d_time.seconds // 3600
-minutes_7d = (last_7d_time.seconds % 3600) // 60
-seconds_7d = last_7d_time.seconds % 60
-last_7d_time = f"{hours_7d:02d}:{minutes_7d:02d}:{seconds_7d:02d}"
+# Check if last_7d_KM is zero
+if last_7d_KM != 0:
+    percent_longrun = (longrun_7d_km / last_7d_KM) * 100
+    percent_longrun = int(round(percent_longrun, 0))
+else:
+    # Handle the case where last_7d_KM is zero
+    percent_longrun = 0  # Set to a default value or handle it accordingly
+
+if last_7d_time != 0:
+    # fix last 7day time
+    hours_7d = last_7d_time.seconds // 3600
+    minutes_7d = (last_7d_time.seconds % 3600) // 60
+    seconds_7d = last_7d_time.seconds % 60
+    last_7d_time = f"{hours_7d:02d}:{minutes_7d:02d}:{seconds_7d:02d}"
+else:
+    last_7d_time = 0
 
 # Define arrows
 load_arrow = '▲' if todays_load > yesterdays_load else '▼' if todays_load < yesterdays_load else '='
@@ -285,11 +287,11 @@ distance_marathon = 42195  # Marathon
 
 # % of CP for each distance
 modification_factor_5k = 1.065
-modification_factor_10k = 1.01
+modification_factor_10k = 1.017
 modification_factor_HM = 0.96
 modification_factor_marathon = 0.9
 
-# target race CP
+# calculate target race CP
 CP_5k = modification_factor_5k * rounded_CP_value
 CP_5k = int(CP_5k)
 CP_10k = modification_factor_10k * rounded_CP_value
@@ -332,85 +334,36 @@ time_marathon = calculate_time(ECOR_M, distance_marathon, rounded_CP_value, m, m
 
 
 # Making the figures
-# Plotting the first line chart (tCTL vs rCTL) using Plotly Express
-fig1 = px.line(df_ytd, x='Date', y=['tCTL', 'rCTL'], title=f'tCTL vs rCTL (fig1)',
-               labels={'value': 'CTL'}, color_discrete_sequence=['#2283B4','firebrick'])
-
-fig1.update_layout(
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-fig1.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-
 # RSS per run and CTL
-fig1neu = px.bar(df_last_90_days, x='Date', y=['RSS'], barmode='group', text='Art',
+fig1 = px.bar(df_last_90_days, x='Date', y=['RSS'], barmode='group', text='Art',
               labels={'value':'RSS'}, color_discrete_sequence=['#2283B4'])
 
-fig1neu.add_trace(go.Scatter(x=df_last_90_days['Date'], y=df_last_90_days['rCTL'], mode='lines', line_width=3, name='CTL', line=dict(color='firebrick')))
-fig1neu.add_trace(go.Scatter(x=df_last_90_days['Date'], y=df_last_90_days['rATL'], mode='lines', line_width=3, name='ATL', line=dict(color='rgb(34, 180, 180)')))
+fig1.add_trace(go.Scatter(x=df_last_90_days['Date'], y=df_last_90_days['CTL'], mode='lines', line_width=3, name='CTL', line=dict(color='firebrick')))
 
-fig1neu.update_layout(
-    title='RSS and CTL for last 90d (fig1neu)',
+fig1.update_layout(
+    title='RSS and CTL for last 90d (fig1)',
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
-
-# YTD load comparison
-fig2 = px.line(df_ytd, x='Date', y=['TSS load', 'RSS load'], title=f'YTD load comparison of {current_year} (fig2)',
-              labels={'value': 'load', 'variable': 'load'},
+  
+# Load for last 90d
+fig2 = px.line(df_last_90_days, x='Date', y=['load'],
+              labels={'value': 'load', 'variable': 'load'}, 
               line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'], range_y=[0.5,2])
 
 fig2.update_layout(
+    title='load for last 90d (fig2)',
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white",
 )
-
 fig2.update_xaxes(showgrid=False)
 fig2.update_yaxes(showgrid=False)
-
-fig2.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-
-# Define the shading ranges
-shading_ranges = [
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 0.5, 'y1': 0.8, 'color': 'rgba(53, 77, 115,0.5)'},  # blue
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 0.8, 'y1': 1, 'color': 'rgba(0, 200, 0,0.5)'},  # lightgreen
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1, 'y1': 1.3, 'color': 'rgba(0,255,100,0.5)'},  # darkgreen
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.3, 'y1': 1.5, 'color' : 'rgba(255,255,0,0.5)'},  # Yellow
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.5, 'y1': 2, 'color': 'rgba(255,0,0,0.5)'}  # Red
-]
-
-# Add the shaded regions to the plot
-for shading_range in shading_ranges:
-    fig2.add_shape(type="rect",
-                  x0=shading_range['x0'], x1=shading_range['x1'],
-                  y0=shading_range['y0'], y1=shading_range['y1'],
-                  fillcolor=shading_range['color'], opacity=0.5, layer='below', line_width=0)
-    
-# Load for last 90d
-fig2neu = px.line(df_last_90_days, x='Date', y=['RSS load'],
-              labels={'value': 'load', 'variable': 'load'},
-              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'], range_y=[0.5,2])
-
-fig2neu.update_layout(
-    title='load for last 90d (fig2neu)',
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-fig2neu.update_xaxes(showgrid=False)
-fig2neu.update_yaxes(showgrid=False)
 
 # Define the shading ranges
 shading_ranges_new = [
@@ -421,14 +374,14 @@ shading_ranges_new = [
     {'x0': df_last_90_days['Date'].min(), 'x1': df_last_90_days['Date'].max(), 'y0': 1.5, 'y1': 2, 'color': 'rgba(255,0,0,0.5)'}  # Red
 ]
 for shading_range in shading_ranges_new:
-    fig2neu.add_shape(type="rect",
+    fig2.add_shape(type="rect",
                   x0=shading_range['x0'], x1=shading_range['x1'],
                   y0=shading_range['y0'], y1=shading_range['y1'],
                   fillcolor=shading_range['color'], opacity=0.5, layer='below', line_width=0)
 
 
 # Plotting the third line chart FTP vs CP using Plotly Express
-fig3 = px.line(df_ytd, x='Date', y=['FTP', 'CP'], title=f'YTD comparison: CP vs FTP ({current_year}) (fig3)',
+fig3 = px.line(df_last_365_days, x='Date', y=['CP'], title=f'CP for last 365 days (fig3)',
               labels={'value': 'CP/FTP', 'variable': 'Metric'},
               line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'])
 
@@ -439,22 +392,6 @@ fig3.update_layout(
     legend_title=None,
     plot_bgcolor="white",
 )
-
-fig3.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-
-# Plotting daily RSS vs TSS
-fig4 = px.bar(df_ytd, x='Date', y=['TSS', 'RSS'], title=f'TSS vs RSS per Run (fig4)', barmode='group', text='Art',
-              labels={'value':'TSS/RSS'}, color_discrete_sequence=['#2283B4','firebrick'])
-
-fig4.update_layout(
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-fig4.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # Monthly running progress
 fig5 = px.histogram(df_until_today, x='Year', y='KM', color='Year', color_discrete_sequence=['rgb(34, 180, 180)'])
@@ -534,23 +471,6 @@ fig9.update_layout(
 # add shaded region
 fig9.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
 
-# PWR/HR Zone2 
-fig10 = px.line(result_df_avg_Z2_pwr_hr_42_days, x='Date', y='Cumulative_Z2_Avg_pwr_hr_42_Days',
-              labels={'Cumulative_Z2_Avg_pwr_hr_90_Days': 'Avg pwr/hr Z2'}, color_discrete_sequence=['#2283B4'])
-
-fig10.update_layout(
-    title='Avg of pwr/hr for Trailing 42 Days only Zone2 (fig10)',
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    yaxis_title='Pwr/Hr',
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-# add shaded region
-fig10.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
-
 # Weekly Data last 365d
 # Create a Plotly figure
 fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
@@ -558,11 +478,11 @@ fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, color_discret
 # Add a bar trace for 'RSS' on the secondary y-axis
 fig11.add_trace(px.scatter(weekly_data, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
 
-ymax1 = weekly_data['KM'].max()*1.10
+ymax1 = weekly_data['RSS'].max()*1.10
 fig11.update_layout(
     title='Weekly KM vs RSS (fig11)',
-    yaxis=dict(range=[0, ymax1]),
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax1*5.44]),
+    yaxis=dict(range=[0, ymax1/4.8]),
+    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax1]),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
@@ -609,8 +529,8 @@ fig15.add_trace(go.Scatter(x=merged_df_goal_complete['Date'],y=merged_df_goal_co
     mode='lines', line_color='rgb(34,180,180)', fillcolor='rgba(64, 162, 111, 0.3)'),)
 fig15.update_layout(
     title=f'Goal vs actual {current_year} (fig15)',
-    width=1280,  # Set the width of the graph
-    height=750,  # Set the height of the graph
+    width=650,  # Set the width of the graph
+    height=400,  # Set the height of the graph
     showlegend=False,
     plot_bgcolor="white",
 )
@@ -640,11 +560,11 @@ fig17 = px.bar(weekly_data_current_year, x='Date', y='KM', labels={'KM': 'KM'}, 
 # Add a bar trace for 'RSS' on the secondary y-axis
 fig17.add_trace(px.scatter(weekly_data_current_year, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
 
-ymax2 = weekly_data_current_year['KM'].max()*1.10
+ymax2 = weekly_data_current_year['RSS'].max()*1.10
 fig17.update_layout(
     title=f'Weekly KM vs RSS for {current_year} (fig17)',
-    yaxis=dict(range=[0, ymax2]),
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax2*5.44]),
+    yaxis=dict(range=[0, ymax2/4.8]),
+    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax2]),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
@@ -654,9 +574,9 @@ fig17.update_layout(
 fig17.add_vline(x=f"{today}", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
 
 # This year's load
-fig18 = px.line(df_current_year, x='Date', y=['TSS load', 'RSS load'],
+fig18 = px.line(df_current_year, x='Date', y=['load'],
               labels={'value': 'load', 'variable': 'load'},
-              line_shape='linear', color_discrete_sequence=['rgb(34, 180, 180)','firebrick'])
+              line_shape='linear', color_discrete_sequence=['firebrick'])
 
 fig18.update_layout(
     title=f'Load comparison of {current_year} (fig18)',
@@ -688,78 +608,6 @@ for shading_range_current in shading_ranges_current:
                   y0=shading_range_current['y0'], y1=shading_range_current['y1'],
                   fillcolor=shading_range_current['color'], opacity=0.5, layer='below', line_width=0)
 
-# Box Plot for RSS/TSS
-df_ytd_jan28 = df_ytd[df_ytd['Date'] >= '2024-01-28']
-fig19 = px.box(df_ytd_jan28, y='RSS/TSS', points='all', color='Art', color_discrete_sequence=['rgb(178, 34, 34)','rgb(34, 180, 180)'])
-
-fig19.update_layout(
-    title='RSS/TSS (fig19)',
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-# RRS/TSS Power abhängig? Scatter
-fig19_1 = px.scatter(df_ytd_jan28, y='RSS/TSS', x='Watt', trendline='ols', color_discrete_sequence=['rgb(178, 34, 34)','rgb(34, 180, 180)'])
-
-fig19_1.update_layout(
-    title='RSS/TSS (fig19_1)',
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-# Fig20 CTL vs 42d average of RSS
-fig20 = px.line(df_ytd, x='Date', y=['rCTL', '42d avg'], title=f'rCTL vs 42d avg (fig20)',
-               labels={'value': 'CTL'}, color_discrete_sequence=['#2283B4','firebrick'])
-
-fig20.update_layout(
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-fig20.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-
-# YTD load comparison RSS vs 42d avg
-fig21 = px.line(df_ytd, x='Date', y=['TSS load', 'load (avg)'], title=f'YTD load comparison of {current_year} (fig21)',
-              labels={'value': 'load', 'variable': 'load'},
-              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'])
-
-fig21.update_layout(
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    plot_bgcolor="white",
-)
-
-fig21.update_xaxes(showgrid=False)
-fig21.update_yaxes(showgrid=False)
-
-fig21.add_vline(x="2024-01-27", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-
-# Define the shading ranges
-shading_ranges = [
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 0.5, 'y1': 0.8, 'color': 'rgba(53, 77, 115,0.5)'},  # blue
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 0.8, 'y1': 1, 'color': 'rgba(0, 200, 0,0.5)'},  # lightgreen
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1, 'y1': 1.3, 'color': 'rgba(0,255,100,0.5)'},  # darkgreen
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.3, 'y1': 1.5, 'color' : 'rgba(255,255,0,0.5)'},  # Yellow
-    {'x0': df_ytd['Date'].min(), 'x1': df_ytd['Date'].max(), 'y0': 1.5, 'y1': 2, 'color': 'rgba(255,0,0,0.5)'}  # Red
-]
-
-# Add the shaded regions to the plot
-for shading_range in shading_ranges:
-    fig21.add_shape(type="rect",
-                  x0=shading_range['x0'], x1=shading_range['x1'],
-                  y0=shading_range['y0'], y1=shading_range['y1'],
-                  fillcolor=shading_range['color'], opacity=0.5, layer='below', line_width=0)
 
 # Activity Graph
 df_last_90_days.fillna({'KM':0, 'RSS':0, 'HFQ':0, 'W1':0, 'W2':0, 'HM':0, 'Pace':0}, inplace=True)
@@ -931,7 +779,7 @@ html.Div(
 
             html.P(children=[
                 html.Span(html.B("Last 7d KM:"), style={'display': 'inline-block', 'width': '200px'}),
-                html.Span([f"{last_7d_KM} ", html.Span(arrow_7d_KM, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span([f"{last_7d_KM_rounded} ", html.Span(arrow_7d_KM, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'}),
                 html.Span(html.B("Last 7d RSS:"), style={'display': 'inline-block', 'width': '200px'}),
                 html.Span([f"{last_7d_RSS} ", html.Span(arrow_7d_RSS, style={'fontSize': '0.8em'})], style={'display': 'inline-block', 'width': '150px'}),
             ], style={'display': 'flex', 'align-items': 'baseline'}),
@@ -939,8 +787,8 @@ html.Div(
             html.P(children=[
                 html.Span(html.B("Last 7d time:"), style={'display': 'inline-block', 'width': '200px'}),
                 html.Span([f"{last_7d_time}"], style={'display': 'inline-block', 'width': '150px'}),
-                html.Span(html.B(" "), style={'display': 'inline-block', 'width': '200px'}),
-                html.Span([" "], style={'display': 'inline-block', 'width': '150px'})
+                html.Span(html.B("Longrun ratio:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{percent_longrun} %"], style={'display': 'inline-block', 'width': '150px'})
             ], style={'display': 'flex', 'align-items': 'baseline'}),            
             
         ],
@@ -999,31 +847,8 @@ dcc.Tab(label='Power-based Figures', children=[
             # CP vs FTP
             html.Div(dcc.Graph(figure=fig3, config={'displayModeBar': False})),
             # TSS vs RSS per run
-            html.Div(dcc.Graph(figure=fig4, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),     
-        html.Div([
-            # pwr/hr
             html.Div(dcc.Graph(figure=fig9, config={'displayModeBar': False})),
-            # rss/tss
-            html.Div(dcc.Graph(figure=fig10, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),
-        html.Div([
-            # CTL vs 42d avg
-            html.Div(dcc.Graph(figure=fig20, config={'displayModeBar': False})),
-            # rss/tss
-            html.Div(dcc.Graph(figure=fig21, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),
-        html.Div([
-            # CTL vs 42d avg
-            html.Div(dcc.Graph(figure=fig19, config={'displayModeBar': False})),
-            html.Div(dcc.Graph(figure=fig19_1, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),
-        html.Div([
-            # CTL und RSS
-            html.Div(dcc.Graph(figure=fig1neu, config={'displayModeBar': False})),
-            # rss/tss
-            html.Div(dcc.Graph(figure=fig2neu, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),
+        ], style={'display': 'flex'}),     
         ]),
 
 # Tab 3 - Runnung Volume
@@ -1053,17 +878,14 @@ dcc.Tab(label=f'{current_year}', children=[
         html.Div([
         # Goal Graph for 2024
         html.Div(dcc.Graph(figure=fig15, config={'displayModeBar': False})),
+        html.Div(dcc.Graph(figure=fig18, config={'displayModeBar': False})),
     ], style={'display': 'flex'}),     
         html.Div([
         # Monthly Km for current year
-        html.Div(dcc.Graph(figure=fig18, config={'displayModeBar': False})),
-        # weekly Km and TSS for current year
         html.Div(dcc.Graph(figure=fig17, config={'displayModeBar': False})),
+        # weekly Km and TSS for current year
+        html.Div(dcc.Graph(figure=fig14, config={'displayModeBar': False})),
     ], style={'display': 'flex'}),  
-        html.Div([
-        # load for current year
-            dcc.Graph(figure=fig14, config={'displayModeBar': False}),
-    ],),  
         ]),
 
 # Tab 5 - Peaks Map
