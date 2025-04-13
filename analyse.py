@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 app = Dash(__name__)
 
 # Load data from Excel file
-df = pd.read_excel("../training.xlsx", sheet_name="2018+", usecols="C:X")
+df = pd.read_excel("../training.xlsx", sheet_name="2018+", usecols="C:Y")
 df_active_shoes = pd.read_excel('../training.xlsx' , sheet_name="Schuhe", usecols="A")
 df_active_shoes.dropna(inplace=True)
 df_peaks = pd.read_csv("../peaks_projekt/Peaks_Map/peaks_data.csv")
@@ -153,6 +153,10 @@ for date in pd.date_range(start_date, pd.to_datetime('today')):
 result_df_90_days = pd.DataFrame({'Date': pd.date_range(start_date, pd.to_datetime('today')), 'Cumulative_Sum_90_Days': cumulative_sum_90_days})
 result_df_365_days = pd.DataFrame({'Date': pd.date_range(start_date, pd.to_datetime('today')), 'Cumulative_Sum_365_Days': cumulative_sum_365_days})
 merged_df = pd.merge(result_df_90_days, result_df_365_days, on='Date', how='outer')
+cumulative_sum_90_today = merged_df['Cumulative_Sum_90_Days'].iloc[-1]
+cumulative_sum_365_today = merged_df['Cumulative_Sum_365_Days'].iloc[-1]
+cumulative_sum_90_today = int(round(cumulative_sum_90_today, 0))
+cumulative_sum_365_today = int(round(cumulative_sum_365_today, 0))
 
 # PWR/HR
 # Calculate the cumulative average of 'pwr/hr' for each day starting from January 1, 2024, for the trailing 42 days
@@ -352,7 +356,7 @@ fig1.update_layout(
 # Load for last 90d
 fig2 = px.line(df_last_90_days, x='Date', y=['load'],
               labels={'value': 'load', 'variable': 'load'}, 
-              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'], range_y=[0.5,2])
+              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'], range_y=[0,2])
 
 fig2.update_layout(
     title='load for last 90d (fig2)',
@@ -380,11 +384,12 @@ for shading_range in shading_ranges_new:
                   fillcolor=shading_range['color'], opacity=0.5, layer='below', line_width=0)
 
 
-# Plotting the third line chart FTP vs CP using Plotly Express
-fig3 = px.line(df_last_365_days, x='Date', y=['CP'], title=f'CP for last 365 days (fig3)',
-              labels={'value': 'CP/FTP', 'variable': 'Metric'},
-              line_shape='linear', color_discrete_sequence=['#2283B4','firebrick'])
+# Create the primary line chart for 'CP'
+fig3 = px.line(df_last_365_days, x='Date', y=['CP'], title='CP for last 365 days (fig3)',
+               labels={'value': 'CP/FTP', 'variable': 'Metric'},
+               line_shape='linear', color_discrete_sequence=['#2283B4'])
 
+# Update layout of the figure for primary axis
 fig3.update_layout(
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
@@ -393,18 +398,57 @@ fig3.update_layout(
     plot_bgcolor="white",
 )
 
-# Monthly running progress
-fig5 = px.histogram(df_until_today, x='Year', y='KM', color='Year', color_discrete_sequence=['rgb(34, 180, 180)'])
 
+# Monthly running progress
+
+# Extract the year and group by year, summing up the kilometers
+df_running_progress = df_until_today.groupby(df_until_today['Date'].dt.year).agg({'KM': 'sum'}).reset_index()
+df_running_progress.rename(columns={'Date': 'Year'}, inplace=True)
+
+# Create a new column to categorize the 'KM' values
+def categorize_km(KM):
+    if KM < 1000:
+        return '0-999 km'
+    elif 1000 <= KM < 2000:
+        return '1000-1999 km'
+    else:
+        return '>2000 km'
+
+df_running_progress['Category'] = df_running_progress['KM'].apply(categorize_km)
+
+# Define color mapping for categories
+color_map = {
+    '0-999 km': 'rgb(34, 180, 180)',    # Light teal
+    '1000-1999 km': 'rgb(113, 135, 38)', # Orange
+    '>2000 km': 'firebrick'      # Crimson
+}
+
+# Create the histogram
+fig5 = px.bar(
+    df_running_progress, 
+    x='Year', 
+    y='KM', 
+    color='Category',
+    color_discrete_map=color_map
+)
+
+# Update layout
 fig5.update_layout(
     title='Yearly Running Volume (fig5)',
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
+    width=650,
+    height=400,
     showlegend=False,
+    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
+    legend_title=None,
     bargap=0.2,
-    plot_bgcolor="white",    
+    plot_bgcolor="white",
     yaxis_title='KM',
 )
+
+# Add threshold lines
+fig5.add_hline(y=1000, line_width=1, line_dash='dash', line_color="firebrick")
+fig5.add_hline(y=2000, line_width=1, line_dash='dash', line_color="firebrick")
+
 
 # Monthly elevation gain
 
@@ -444,6 +488,8 @@ fig8.update_layout(
     xaxis_title='Date',
     yaxis_title='Trailing 90 Days',
     yaxis2_title='Trailing 365 Days',
+    yaxis2=dict(titlefont=dict(color="#2283B4"), tickfont=dict(color="#2283B4"),),
+    yaxis=dict(titlefont=dict(color="firebrick"), tickfont=dict(color="firebrick")),
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     width=650,  # Set the width of the graph
@@ -452,7 +498,7 @@ fig8.update_layout(
 )
 
 # add shaded region
-fig8.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
+# fig8.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
 
 # PWR/HR Graph
 fig9 = px.line(result_df_avg_pwr_hr_42_days, x='Date', y='Cumulative_Avg_pwr_hr_42_Days',
@@ -468,9 +514,6 @@ fig9.update_layout(
     plot_bgcolor="white",
 )
 
-# add shaded region
-fig9.add_vrect(x0="2023-10-28", x1="2023-12-28", fillcolor="firebrick", line_width=0, opacity=0.2)
-
 # Weekly Data last 365d
 # Create a Plotly figure
 fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
@@ -481,14 +524,16 @@ fig11.add_trace(px.scatter(weekly_data, x='Date', y='RSS', labels={'RSS': 'RSS'}
 ymax1 = weekly_data['RSS'].max()*1.10
 fig11.update_layout(
     title='Weekly KM vs RSS (fig11)',
-    yaxis=dict(range=[0, ymax1/4.8]),
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax1]),
+    yaxis=dict(range=[0, ymax1/5], titlefont=dict(color="#2283B4"), tickfont=dict(color="#2283B4"),),
+    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax1],titlefont=dict(color="firebrick"), tickfont=dict(color="firebrick")),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
     legend_title=None,
     plot_bgcolor="white"
 )
+fig11.add_hline(y=30, line=dict(color="black", width=1, dash="dash"))
+fig11.add_hline(y=40, line=dict(color="black", width=1, dash="dash"))
 
 # Yearly YTD running goal graph
 fig13 = px.line(merged_df_goal, x='Date', y=['actual', 'goal'],  labels={'value':'KM'}, color_discrete_sequence=['rgb(34, 180, 180)','firebrick'])
@@ -503,7 +548,7 @@ fig13.update_layout(
 )
 
 # 2024 monthly kilometer
-fig14 = px.histogram(df_current_year, x='Date', y='KM', barmode='group', color_discrete_sequence=['rgb(34, 180, 180)'])
+fig14 = px.histogram(df_current_year, x='Month', y='KM', barmode='group', color_discrete_sequence=['rgb(34, 180, 180)'])
 
 fig14.update_layout(
     title=f'Monthly Volumes for {current_year} (fig14)',
@@ -515,7 +560,12 @@ fig14.update_layout(
     plot_bgcolor="white",    
     yaxis_title='KM',
 )
-fig14.update_xaxes(ticklabelmode='period')
+fig14.update_xaxes(
+    tickvals=list(range(1, 13)),
+    ticktext=['January', 'February', 'March', 'April', 'May', 'June', 
+              'July', 'August', 'September', 'October', 'November', 'December'],
+    ticklabelmode='period'
+)
 
 # Yearly YTD running goal graph
 fig15 = go.Figure()
@@ -563,8 +613,8 @@ fig17.add_trace(px.scatter(weekly_data_current_year, x='Date', y='RSS', labels={
 ymax2 = weekly_data_current_year['RSS'].max()*1.10
 fig17.update_layout(
     title=f'Weekly KM vs RSS for {current_year} (fig17)',
-    yaxis=dict(range=[0, ymax2/4.8]),
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax2]),
+    yaxis=dict(range=[0, ymax2/5], titlefont=dict(color="#2283B4"), tickfont=dict(color="#2283B4")),
+    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax2], titlefont=dict(color="firebrick"), tickfont=dict(color="firebrick")),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
@@ -572,6 +622,8 @@ fig17.update_layout(
     plot_bgcolor="white"
 )
 fig17.add_vline(x=f"{today}", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
+fig17.add_hline(y=30, line=dict(color="black", width=1, dash="dash"))
+fig17.add_hline(y=40, line=dict(color="black", width=1, dash="dash"))
 
 # This year's load
 fig18 = px.line(df_current_year, x='Date', y=['load'],
@@ -580,7 +632,7 @@ fig18 = px.line(df_current_year, x='Date', y=['load'],
 
 fig18.update_layout(
     title=f'Load comparison of {current_year} (fig18)',
-    yaxis=dict(range=[0.5,2]),
+    yaxis=dict(range=[0,2]),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
@@ -791,6 +843,15 @@ html.Div(
                 html.Span([f"{percent_longrun} %"], style={'display': 'inline-block', 'width': '150px'})
             ], style={'display': 'flex', 'align-items': 'baseline'}),            
             
+            html.P(html.Span(), style={'borderBottom': '1px solid black'}),
+
+            html.P(children=[
+                html.Span(html.B("90d running volume:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{cumulative_sum_90_today}"], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B("365d running volume:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{cumulative_sum_365_today}"], style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),     
+
         ],
         style={'width':'590px','border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin':'10px', 'background-color': 'rgba(178, 34, 34, 0.4)'}  # Adjust width as needed
 ),],
@@ -873,10 +934,10 @@ dcc.Tab(label='Running Volume', children=[
     ], style={'display': 'flex'}), 
         ]),
 
-# Tab 4 - Daten 2024
+# Tab 4 - Daten current year
 dcc.Tab(label=f'{current_year}', children=[
         html.Div([
-        # Goal Graph for 2024
+        # Goal Graph for current year
         html.Div(dcc.Graph(figure=fig15, config={'displayModeBar': False})),
         html.Div(dcc.Graph(figure=fig18, config={'displayModeBar': False})),
     ], style={'display': 'flex'}),     
