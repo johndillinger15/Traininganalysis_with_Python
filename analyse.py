@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import numpy as np
 
 # Color-scheme
 # rgb(178, 34, 34), rgb(153, 97, 0), rgb(113, 135, 38), rgb(64, 162, 111), rgb(34, 180, 180)
@@ -14,13 +15,19 @@ from datetime import datetime, timedelta
 app = Dash(__name__)
 
 # Load data from Excel file
-df = pd.read_excel("../training.xlsx", sheet_name="2018+", usecols="C:Y")
+df = pd.read_excel("../training.xlsx", sheet_name="2018+", usecols="C:X")
 df_active_shoes = pd.read_excel('../training.xlsx' , sheet_name="Schuhe", usecols="A")
 df_active_shoes.dropna(inplace=True)
 df_peaks = pd.read_csv("../peaks_projekt/Peaks_Map/peaks_data.csv")
 df_raw_peaks = pd.read_csv("../peaks_projekt/Peaks_Map/peaks_raw_data.csv")
 df_peaks = df_peaks.filter(['name','elevation','gelaufen'])
 df_peaks.index = df_peaks.index +1
+# import rowing data
+df_row = pd.read_excel("../training.xlsx", sheet_name="rowing")
+# Work on a copy to avoid view-vs-copy pitfalls
+df_row = df_row.copy()
+# Ensure date
+df_row['Datum'] = pd.to_datetime(df_row['Datum'], dayfirst=True, errors='coerce')
 
 # Convert Date and Pace column to datetime and Time and format
 df['Date'] = pd.to_datetime(df['Datum'])
@@ -58,13 +65,16 @@ one_year_ago = today2 - timedelta(days=365)
 # Filter the dataframe for the last 90 days and excluding future dates
 df_last_90_days = df[(df['Date'] >= ninety_days_ago) & (df['Date'] <= today2)]
 df_last_365_days = df[(df['Date'] >= one_year_ago) & (df['Date'] <= today2)]
+
 # Calculate the date 7 days ago
 seven_days_ago = today2 - timedelta(days=7)
 # Filter the dataframe for the last 7 days and excluding future dates
-df_last_7_days = df[(df['Date'] >= seven_days_ago) & (df['Date'] <= today2)]# Convert 'Zeit' column to timedelta
-# df_last_7_days['Zeit'] = pd.to_timedelta(df_last_7_days['Zeit'].astype(str))
+df_last_7_days = df[(df['Date'] >= seven_days_ago) & (df['Date'] <= today2)].copy()
+# Convert 'Zeit' column to timedelta
 df_last_7_days.loc[:, 'Zeit'] = pd.to_timedelta(df_last_7_days['Zeit'].astype(str))
+# Drop rows with missing 'Zeit'
 df_last_7_days.dropna(subset=['Zeit'], inplace=True)
+
 # Define Running Goal for current year
 # Filter data for the last 5 years
 last_5_years_df = df[(df['Year'] >= current_year - 5) & (df['Year'] < current_year - 0)]
@@ -239,6 +249,30 @@ peaks_percentage = (peaks_completed / peaks_total)*100
 peaks_percentage = round(peaks_percentage, 2)
 longrun_7d_km = df_last_7_days['KM'].max()
 
+# 1) Clean inputs and aggregate to one row per day
+row_km = df_row[['Datum', 'KM']].copy()
+row_km['Datum'] = pd.to_datetime(row_km['Datum'], dayfirst=True, errors='coerce').dt.floor('D')
+row_km['KM'] = (
+    row_km['KM']
+        .astype(str)
+        .str.replace(',', '.', regex=False)
+        .str.extract(r'([-+]?\d*\.?\d+)', expand=False)
+        .astype(float)
+        .fillna(0.0)
+)
+row_km = row_km.dropna(subset=['Datum'])
+row_km = row_km[row_km['Datum'] <= pd.Timestamp.today().normalize()]
+# 2) Aggregate daily totals (in case of multiple rowing sessions per day)
+row_km = row_km.groupby('Datum', as_index=False)['KM'].sum()
+# 3) Rolling windows
+today     = pd.Timestamp.today().normalize()
+start_90  = today - pd.Timedelta(days=90)
+start_365 = today - pd.Timedelta(days=365)
+row_vol_90  = int(round(row_km.loc[row_km['Datum'] >= start_90,  'KM'].sum(), 0))
+row_vol_365 = int(round(row_km.loc[row_km['Datum'] >= start_365, 'KM'].sum(), 0))
+
+
+
 # Check if last_7d_KM is zero
 if last_7d_KM != 0:
     percent_longrun = (longrun_7d_km / last_7d_KM) * 100
@@ -385,12 +419,13 @@ for shading_range in shading_ranges_new:
 
 
 # Create the primary line chart for 'CP'
-fig3 = px.line(df_last_365_days, x='Date', y=['CP'], title='CP for last 365 days (fig3)',
+fig3 = px.line(df_last_365_days, x='Date', y=['CP'], 
                labels={'value': 'CP/FTP', 'variable': 'Metric'},
                line_shape='linear', color_discrete_sequence=['#2283B4'])
 
 # Update layout of the figure for primary axis
 fig3.update_layout(
+    title='CP for last 365 days (fig3)',
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
@@ -434,7 +469,11 @@ fig5 = px.bar(
 
 # Update layout
 fig5.update_layout(
-    title='Yearly Running Volume (fig5)',
+    title=dict(
+        text='Yearly Running Volume (fig5)',
+        xanchor='left', 
+        yanchor='top'
+    ),
     width=650,
     height=400,
     showlegend=False,
@@ -473,28 +512,42 @@ fig6.update_layout(
 fig6.update_xaxes(tickmode='array', tickvals=list(range(1, 13)), ticktext=month_order)
 
 # Create line chart for the running volume of last 90 and 365 days
-# Create a figure with two subplots
 fig8 = make_subplots(specs=[[{"secondary_y": True}]])
 
-# Add traces for Cumulative_Sum_90_Days on the left y-axis
-fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_90_Days'], mode='lines', name='Trailing 90days km', line=dict(color='firebrick')),)
+fig8.add_trace(
+    go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_90_Days'],
+               mode='lines', name='Trailing 90days km', line=dict(color='firebrick')),
+    secondary_y=False
+)
 
-# Add traces for Cumulative_Sum_365_Days on the right y-axis
-fig8.add_trace(go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_365_Days'], mode='lines', name='Trailing 365days km', line=dict(color='rgb(34, 180, 180)')), secondary_y=True)
+fig8.add_trace(
+    go.Scatter(x=merged_df['Date'], y=merged_df['Cumulative_Sum_365_Days'],
+               mode='lines', name='Trailing 365days km', line=dict(color='rgb(34, 180, 180)')),
+    secondary_y=True
+)
 
-# Update layout with titles and labels
+# Layout (note: no legacy titlefont anywhere)
 fig8.update_layout(
-    title='Trailing 90d and 365d Running Volume (fig8)',
-    xaxis_title='Date',
-    yaxis_title='Trailing 90 Days',
-    yaxis2_title='Trailing 365 Days',
-    yaxis2=dict(titlefont=dict(color="#2283B4"), tickfont=dict(color="#2283B4"),),
-    yaxis=dict(titlefont=dict(color="firebrick"), tickfont=dict(color="firebrick")),
+    title=dict(text='Trailing 90d and 365d Running Volume (fig8)'),
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
-    plot_bgcolor="white",
+    legend_title_text=None,
+    width=650,
+    height=400,
+    plot_bgcolor="white"
+)
+
+# Axis titles and fonts (new API)
+fig8.update_yaxes(
+    title_text='Trailing 90 Days',
+    title_font=dict(color="firebrick"),
+    tickfont=dict(color="firebrick"),
+    secondary_y=False
+)
+fig8.update_yaxes(
+    title_text='Trailing 365 Days',
+    title_font=dict(color="rgb(34, 180, 180)"),
+    tickfont=dict(color="rgb(34, 180, 180)"),
+    secondary_y=True
 )
 
 # add shaded region
@@ -515,25 +568,50 @@ fig9.update_layout(
 )
 
 # Weekly Data last 365d
-# Create a Plotly figure
-fig11 = px.bar(weekly_data, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
+fig11 = px.bar(
+    weekly_data, x='Date', y='KM',
+    labels={'KM': 'KM'},
+    color_discrete_sequence=['rgb(34, 180, 180)']
+)
 
-# Add a bar trace for 'RSS' on the secondary y-axis
-fig11.add_trace(px.scatter(weekly_data, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
+# Add RSS as scatter on secondary axis
+fig11.add_trace(
+    px.scatter(
+        weekly_data, x='Date', y='RSS',
+        labels={'RSS': 'RSS'},
+        color_discrete_sequence=['firebrick']
+    ).update_traces(yaxis='y2').data[0]
+)
 
-ymax1 = weekly_data['RSS'].max()*1.10
+ymax1 = weekly_data['RSS'].max() * 1.10
+
 fig11.update_layout(
-    title='Weekly KM vs RSS (fig11)',
-    yaxis=dict(range=[0, ymax1/5], titlefont=dict(color="#2283B4"), tickfont=dict(color="#2283B4"),),
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax1],titlefont=dict(color="firebrick"), tickfont=dict(color="firebrick")),
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
+    title=dict(text='Weekly KM vs RSS (fig11)'),
+    # Primary y-axis (KM)
+    yaxis=dict(
+        range=[0, ymax1/5],
+        title=dict(text='KM', font=dict(color="#2283B4")),
+        tickfont=dict(color="#2283B4")
+    ),
+    # Secondary y-axis (RSS)
+    yaxis2=dict(
+        title=dict(text='RSS', font=dict(color="firebrick")),
+        tickfont=dict(color="firebrick"),
+        overlaying='y',
+        side='right',
+        range=[0, ymax1]
+    ),
+    width=650,
+    height=400,
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
+    legend_title_text=None,
     plot_bgcolor="white"
 )
-fig11.add_hline(y=30, line=dict(color="black", width=1, dash="dash"))
-fig11.add_hline(y=40, line=dict(color="black", width=1, dash="dash"))
+
+# Threshold lines on the RSS axis (use yref='y2')
+fig11.add_hline(y=30, line=dict(color="black", width=1, dash="dash"), yref="y1")
+fig11.add_hline(y=40, line=dict(color="black", width=1, dash="dash"), yref="y1")
+
 
 # Yearly YTD running goal graph
 fig13 = px.line(merged_df_goal, x='Date', y=['actual', 'goal'],  labels={'value':'KM'}, color_discrete_sequence=['rgb(34, 180, 180)','firebrick'])
@@ -574,16 +652,19 @@ fig15.add_trace(go.Scatter(x=merged_df_goal_complete['Date'],y=merged_df_goal_co
     mode='lines',
     line_color='firebrick',
     ))
+
 fig15.add_trace(go.Scatter(x=merged_df_goal_complete['Date'],y=merged_df_goal_complete['actual'],
     fill='tonexty', # fill area between trace0 and trace1
     mode='lines', line_color='rgb(34,180,180)', fillcolor='rgba(64, 162, 111, 0.3)'),)
+
 fig15.update_layout(
-    title=f'Goal vs actual {current_year} (fig15)',
+    title=dict(text=f'Goal vs actual {current_year} (fig15)'),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
     showlegend=False,
     plot_bgcolor="white",
 )
+
 fig15.add_vline(x=f"{today}", line_width=2, line_color="rgb(153, 97, 0)")
 
 
@@ -604,26 +685,55 @@ fig16.update_layout(
 fig16.add_hline(y=10000, line_width=1, line_dash='dash', line_color="firebrick")
 
 # Weekly Data current year
-# Create a Plotly figure
-fig17 = px.bar(weekly_data_current_year, x='Date', y='KM', labels={'KM': 'KM'}, color_discrete_sequence=['rgb(34, 180, 180)'])
+fig17 = px.bar(
+    weekly_data_current_year,
+    x='Date',
+    y='KM',
+    labels={'KM': 'KM'},
+    color_discrete_sequence=['rgb(34, 180, 180)']
+)
 
-# Add a bar trace for 'RSS' on the secondary y-axis
-fig17.add_trace(px.scatter(weekly_data_current_year, x='Date', y='RSS', labels={'RSS': 'RSS'}, color_discrete_sequence=['firebrick']).update_traces(yaxis='y2').data[0])
+# Add RSS on secondary y-axis
+fig17.add_trace(
+    px.scatter(
+        weekly_data_current_year,
+        x='Date',
+        y='RSS',
+        labels={'RSS': 'RSS'},
+        color_discrete_sequence=['firebrick']
+    ).update_traces(yaxis='y2').data[0]
+)
 
-ymax2 = weekly_data_current_year['RSS'].max()*1.10
+ymax2 = weekly_data_current_year['RSS'].max() * 1.10
+
 fig17.update_layout(
-    title=f'Weekly KM vs RSS for {current_year} (fig17)',
-    yaxis=dict(range=[0, ymax2/5], titlefont=dict(color="#2283B4"), tickfont=dict(color="#2283B4")),
-    yaxis2=dict(title='RSS', overlaying='y', side='right', range=[0, ymax2], titlefont=dict(color="firebrick"), tickfont=dict(color="firebrick")),
-    width=650,  # Set the width of the graph
-    height=400,  # Set the height of the graph
+    title=dict(text=f'Weekly KM vs RSS for {current_year} (fig17)'),
+    # Primary y-axis (KM)
+    yaxis=dict(
+        range=[0, ymax2/5],
+        title=dict(text='KM', font=dict(color="#2283B4")),
+        tickfont=dict(color="#2283B4")
+    ),
+    # Secondary y-axis (RSS)
+    yaxis2=dict(
+        title=dict(text='RSS', font=dict(color="firebrick")),
+        tickfont=dict(color="firebrick"),
+        overlaying='y',
+        side='right',
+        range=[0, ymax2]
+    ),
+    width=650,
+    height=400,
     legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
+    legend_title_text=None,
     plot_bgcolor="white"
 )
+
+# Reference lines
 fig17.add_vline(x=f"{today}", line_width=3, line_dash="dash", line_color="rgb(153, 97, 0)")
-fig17.add_hline(y=30, line=dict(color="black", width=1, dash="dash"))
-fig17.add_hline(y=40, line=dict(color="black", width=1, dash="dash"))
+fig17.add_hline(y=30, line=dict(color="black", width=1, dash="dash"), yref="y1")
+fig17.add_hline(y=40, line=dict(color="black", width=1, dash="dash"), yref="y1")
+
 
 # This year's load
 fig18 = px.line(df_current_year, x='Date', y=['load'],
@@ -631,12 +741,11 @@ fig18 = px.line(df_current_year, x='Date', y=['load'],
               line_shape='linear', color_discrete_sequence=['firebrick'])
 
 fig18.update_layout(
-    title=f'Load comparison of {current_year} (fig18)',
+    title=dict(text=f'Load comparison of {current_year} (fig18)'),
     yaxis=dict(range=[0,2]),
     width=650,  # Set the width of the graph
     height=400,  # Set the height of the graph
-    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
-    legend_title=None,
+    showlegend=False,
     plot_bgcolor="white",
 )
 fig18.update_xaxes(showgrid=False)
@@ -661,22 +770,904 @@ for shading_range_current in shading_ranges_current:
                   fillcolor=shading_range_current['color'], opacity=0.5, layer='below', line_width=0)
 
 
-# Activity Graph
-df_last_90_days.fillna({'KM':0, 'RSS':0, 'HFQ':0, 'W1':0, 'W2':0, 'HM':0, 'Pace':0}, inplace=True)
-fig23 = px.scatter(df_last_90_days, x='Date', y='KM', size='RSS', hover_data=['Art','Date','KM','RSS'])
-first_of_month = df_last_90_days[df_last_90_days['Date'].dt.day == 1]['Date'].tolist()
+# ---- Running Calendar Heatmap (365d, Mon on top; hue by Art, intensity by RSS) — fig23 ----
+# Requires: import numpy as np
+
+# 0) Prepare data (one run per day)
+df_run = df[['Date','RSS','KM','Art']].copy()
+df_run['Date'] = pd.to_datetime(df_run['Date'], errors='coerce')
+df_run['RSS']  = pd.to_numeric(df_run['RSS'], errors='coerce').fillna(0)
+df_run['KM']   = pd.to_numeric(df_run['KM'], errors='coerce').fillna(0)
+df_run['Art']  = df_run['Art'].fillna('')
+
+# 1) Window = last 365 days; align grid start to Monday
+end = pd.Timestamp.today().normalize()
+start = end - pd.Timedelta(days=364)
+grid_start = start - pd.Timedelta(days=start.weekday())
+df_run = df_run[(df_run['Date'] >= start) & (df_run['Date'] <= end)].copy()
+
+# 2) Bucketing function for coloring (keep categories LOWERCASE)
+def _cat(a: str):
+    a_low = str(a).lower()
+    if 'z2' in a_low:       return 'z2'
+    if 'trail' in a_low:    return 'trail'
+    if 'wk' in a_low:       return 'wk'
+    if 'row' in a_low:      return 'row'
+    return 'other'
+
+df_run['cat'] = df_run['Art'].apply(_cat)
+
+# 3) Build full calendar (inactive days explicit)
+all_days = pd.DataFrame({'Date': pd.date_range(grid_start, end, freq='D')})
+cal = all_days.merge(df_run, on='Date', how='left')
+cal[['RSS','KM']] = cal[['RSS','KM']].fillna(0)
+cal['cat'] = cal['cat'].fillna('none')
+cal['Art'] = cal['Art'].fillna('')  # keep original Art string for hover
+
+# 4) Grid coordinates
+cal['week'] = ((cal['Date'] - grid_start).dt.days // 7).astype(int)
+cal['dow']  = cal['Date'].dt.weekday  # Mon=0..Sun=6
+
+weeks = list(range(cal['week'].min(), cal['week'].max() + 1))
+rows_order = [0,1,2,3,4,5,6]
+y_labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+
+# 5) Pivot to matrices
+date_df = (cal.pivot(index='dow', columns='week', values='Date')
+             .reindex(index=rows_order, columns=weeks))
+rss_mat = (cal.pivot(index='dow', columns='week', values='RSS')
+             .reindex(index=rows_order, columns=weeks, fill_value=0)).values
+km_mat  = (cal.pivot(index='dow', columns='week', values='KM')
+             .reindex(index=rows_order, columns=weeks, fill_value=0)).values
+cat_df  = (cal.pivot(index='dow', columns='week', values='cat')
+             .reindex(index=rows_order, columns=weeks).fillna('none'))
+art_df  = (cal.pivot(index='dow', columns='week', values='Art')
+             .reindex(index=rows_order, columns=weeks).fillna(''))
+
+# Pre-format date strings to avoid hover NaNs
+date_str_mat = date_df.map(lambda d: '' if pd.isna(d) else d.strftime('%Y-%m-%d')).values
+cat_mat = cat_df.values
+art_mat = art_df.values
+
+# 6) Normalize intensity by yearly max RSS
+rss_max = max(1.0, float(cal['RSS'].max()))
+z_norm_base = rss_mat / rss_max  # 0..1
+
+# 7) Colors and categories (Option 2: intervals = firebrick, race = crimson)
+colors = {
+    'z2':    (34, 180, 180),   # teal
+    'trail': (255, 162, 0),    # orange
+    'other': (178, 34, 34),    # firebrick
+    'wk':    (190, 37, 186),   # violet
+    'row':   (0, 102, 204),    # blue
+}
+cats = ['z2','trail','other','wk', 'row']
+
+
+
+# 8) Build figure: one heatmap trace per category (use NaN outside the category!)
+fig23 = go.Figure()
+
+for cat in cats:
+    r, g, b = colors[cat]
+    mask_bool = (cat_mat == cat)
+
+    if cat == 'row':
+        # constant 0.6 opacity blue
+        z_norm = np.where(mask_bool, 1.0, np.nan)
+        colorscale = [[0.0, f'rgba({r},{g},{b},0.6)'],
+                      [1.0, f'rgba({r},{g},{b},0.6)']]
+        
+    else:
+        # intensity scaled by RSS
+        z_norm = np.where(mask_bool, z_norm_base, np.nan)
+        colorscale = [
+            [0.00, 'rgb(255,255,255)'],
+            [0.01, f'rgba({r},{g},{b},0.15)'],
+            [0.20, f'rgba({r},{g},{b},0.35)'],
+            [0.60, f'rgba({r},{g},{b},0.60)'],
+            [1.00, f'rgb({r},{g},{b})'],
+        ]
+
+    # customdata unchanged
+    cd = np.dstack([date_str_mat, art_mat, rss_mat, km_mat])
+
+
+    fig23.add_trace(go.Heatmap(
+        z=z_norm,
+        x=weeks,
+        y=y_labels,
+        zmin=0, zmax=1,
+        colorscale=colorscale,
+        showscale=False,
+        customdata=cd,
+        hovertemplate=(
+            "Date: %{customdata[0]}<br>"
+            "Art: %{customdata[1]}<br>"
+            "RSS: %{customdata[2]:.0f}<br>"
+            "KM: %{customdata[3]:.2f}<extra></extra>"
+        )
+    ))
+
+
+# 9) Month labels
+week_starts = [grid_start + pd.Timedelta(days=int(w)*7) for w in weeks]
+tickvals = weeks
+ticktext, prev_month = [], None
+for d in week_starts:
+    ticktext.append(d.strftime('%b') if (prev_month is None or d.month != prev_month) else '')
+    prev_month = d.month
+
+# 10) Layout
 fig23.update_layout(
-    height=75,  # Set the height of the graph
-    width=1240,
+    height=130,
+    width=1200,
+    plot_bgcolor="white",
+    margin=dict(l=0, r=0, b=0, t=0),
+    hovermode='closest'
+)
+fig23.update_yaxes(autorange='reversed', showticklabels=True, showgrid=False, zeroline=False)
+fig23.update_xaxes(
+    tickmode='array', tickvals=tickvals, ticktext=ticktext,
+    showticklabels=True, showgrid=False, zeroline=False
+)
+
+###
+# Rowing
+###
+
+# Normalize German decimals and cast numerics
+for col in ['KM', 'Watt', 'HFQ', 'pwr/hr']:
+    if col in df_row.columns:
+        df_row[col] = (
+            df_row[col]
+            .astype(str)
+            .str.replace(',', '.', regex=False)  # decimal comma -> dot
+        )
+        df_row[col] = pd.to_numeric(df_row[col], errors='coerce')
+
+# Convert Zeit to minutes without needing datetime imports
+def _to_minutes(x):
+    # treat NaN early
+    if pd.isna(x):
+        return float('nan')
+    # already numeric minutes
+    if isinstance(x, (int, float)):
+        return float(x)
+    # objects like datetime.time: detect via attributes
+    if hasattr(x, 'hour') and hasattr(x, 'minute'):
+        sec = getattr(x, 'second', 0)
+        return x.hour*60 + x.minute + sec/60
+    # strings like "mm:ss" or "hh:mm:ss"
+    s = str(x).strip()
+    if ':' in s:
+        parts = s.split(':')
+        try:
+            if len(parts) == 2:
+                m, sec = parts
+                return int(m) + int(sec)/60
+            if len(parts) == 3:
+                h, m, sec = parts
+                return int(h)*60 + int(m) + int(sec)/60
+        except Exception:
+            pass
+    # last resort: numeric coercion
+    return pd.to_numeric(s, errors='coerce')
+
+# Build/ensure Zeit_min
+if 'Zeit_min' not in df_row.columns:
+    df_row['Zeit_min'] = df_row['Zeit'].apply(_to_minutes)
+else:
+    df_row['Zeit_min'] = pd.to_numeric(df_row['Zeit_min'], errors='coerce')
+
+
+###
+# Rowing calendar heatmap (365d) with WOD shaded by duration in firebrick
+# - One workout per day (no per-day grouping)
+# - Steady rows shaded in teal by minutes
+# - WOD rows shaded in firebrick by minutes
+###
+
+# Load sheet
+df_row = pd.read_excel("../training.xlsx", sheet_name="rowing").copy()
+
+# Ensure date
+df_row['Datum'] = pd.to_datetime(df_row['Datum'], dayfirst=True, errors='coerce')
+
+# Normalize German decimals and cast numerics
+for col in ['KM', 'Watt', 'HFQ', 'pwr/hr']:
+    if col in df_row.columns:
+        df_row[col] = (
+            df_row[col]
+            .astype(str)
+            .str.replace(',', '.', regex=False)  # decimal comma -> dot
+        )
+        df_row[col] = pd.to_numeric(df_row[col], errors='coerce')
+
+# Convert Zeit to minutes
+def _to_minutes(x):
+    if pd.isna(x):
+        return float('nan')
+    # numeric already
+    if isinstance(x, (int, float)):
+        return float(x)
+    # time-like object
+    if hasattr(x, 'hour') and hasattr(x, 'minute'):
+        sec = getattr(x, 'second', 0)
+        return x.hour*60 + x.minute + sec/60
+    # strings like "mm:ss" or "hh:mm:ss"
+    s = str(x).strip()
+    if ':' in s:
+        parts = s.split(':')
+        try:
+            if len(parts) == 2:   # mm:ss
+                m, sec = parts
+                return int(m) + int(sec)/60
+            if len(parts) == 3:   # hh:mm:ss
+                h, m, sec = parts
+                return int(h)*60 + int(m) + int(sec)/60
+        except Exception:
+            return float('nan')
+    # last resort: numeric coercion
+    return pd.to_numeric(s, errors='coerce')
+
+# Ensure Zeit_min
+if 'Zeit_min' not in df_row.columns:
+    df_row['Zeit_min'] = df_row['Zeit'].apply(_to_minutes)
+else:
+    df_row['Zeit_min'] = pd.to_numeric(df_row['Zeit_min'], errors='coerce')
+
+# Pretty time string
+def _fmt_minutes(m):
+    if pd.isna(m): return ''
+    m = float(m)
+    h = int(m // 60)
+    mm = int(round(m - 60*h))
+    return f"{h}:{mm:02d}h" if h > 0 else f"{mm} min"
+
+# Build working frame
+row = df_row[['Datum','Art','KM'] + ([c for c in ['Zeit_min','Zeit'] if c in df_row.columns])].copy()
+row['KM']  = pd.to_numeric(row['KM'], errors='coerce').fillna(0)
+row['Art'] = row['Art'].fillna('')
+
+# Ensure Zeit_min and Zeit_str
+if 'Zeit_min' not in row.columns:
+    row['Zeit_min'] = row['Zeit'].apply(_to_minutes)
+else:
+    row['Zeit_min'] = pd.to_numeric(row['Zeit_min'], errors='coerce')
+
+if 'Zeit' in row.columns and row['Zeit'].notna().any():
+    row['Zeit_str'] = row['Zeit'].fillna('').astype(str)
+else:
+    row['Zeit_str'] = row['Zeit_min'].apply(_fmt_minutes)
+
+# 365d window aligned to Monday
+end = pd.Timestamp.today().normalize()
+start = end - pd.Timedelta(days=364)
+grid_start = start - pd.Timedelta(days=start.weekday())
+
+# Keep only window (one workout per day by design)
+row = row[(row['Datum'] >= start) & (row['Datum'] <= end)].copy()
+
+# WOD flag
+row['is_wod'] = row['Art'].astype(str).str.strip().str.upper().eq('WOD')
+
+# Build full calendar grid (include inactive days)
+all_days = pd.DataFrame({'Datum': pd.date_range(grid_start, end, freq='D')})
+cal = all_days.merge(
+    row[['Datum','Art','KM','Zeit_min','Zeit_str','is_wod']],
+    on='Datum', how='left'
+)
+
+# Make dtypes explicit (avoids future downcasting warnings)
+cal['KM']       = pd.to_numeric(cal['KM'], errors='coerce')
+cal['Zeit_min'] = pd.to_numeric(cal['Zeit_min'], errors='coerce')
+cal['Art']      = cal['Art'].astype('string')
+cal['Zeit_str'] = cal['Zeit_str'].astype('string')
+cal['is_wod']   = cal['is_wod'].astype('boolean')  # pandas nullable boolean
+
+# Now fill NA with intended defaults
+cal['KM']       = cal['KM'].fillna(0)
+cal['Zeit_min'] = cal['Zeit_min'].fillna(0)
+cal['Art']      = cal['Art'].fillna('')
+cal['Zeit_str'] = cal['Zeit_str'].fillna('')
+cal['is_wod']   = cal['is_wod'].fillna(False)
+
+
+# Grid coordinates
+cal['week'] = ((cal['Datum'] - grid_start).dt.days // 7).astype(int)  # columns
+cal['dow']  = cal['Datum'].dt.weekday                                 # rows (Mon..Sun)
+
+weeks = list(range(cal['week'].min(), cal['week'].max() + 1))
+rows_order = [0,1,2,3,4,5,6]
+y_labels   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+
+# Pivot to matrices
+date_df = (cal.pivot(index='dow', columns='week', values='Datum')
+             .reindex(index=rows_order, columns=weeks))
+km_mat   = (cal.pivot(index='dow', columns='week', values='KM')
+              .reindex(index=rows_order, columns=weeks, fill_value=0)).values
+min_mat  = (cal.pivot(index='dow', columns='week', values='Zeit_min')
+              .reindex(index=rows_order, columns=weeks, fill_value=0)).values
+art_mat  = (cal.pivot(index='dow', columns='week', values='Art')
+              .reindex(index=rows_order, columns=weeks).fillna('')).values
+zeit_txt = (cal.pivot(index='dow', columns='week', values='Zeit_str')
+              .reindex(index=rows_order, columns=weeks).fillna('')).values
+wod_mat  = (cal.pivot(index='dow', columns='week', values='is_wod')
+              .reindex(index=rows_order, columns=weeks).fillna(False)).values
+
+date_str = date_df.map(lambda d: '' if pd.isna(d) else d.strftime('%Y-%m-%d')).values
+
+# Intensity scaling (minutes)
+mmax = max(1.0, float(cal['Zeit_min'].max()))
+z_norm = min_mat / mmax  # 0..1
+
+# Split into two layers: steady (teal) vs WOD (firebrick)
+mask_wod    = wod_mat.astype(bool)
+mask_steady = ~mask_wod
+
+z_teal = np.where(mask_steady, z_norm, np.nan)
+z_red  = np.where(mask_wod,     z_norm, np.nan)
+
+# Colorscales
+teal = (34, 180, 180)
+colorscale_teal = [
+    [0.00, 'rgb(255,255,255)'],
+    [0.05, f'rgba({teal[0]},{teal[1]},{teal[2]},0.15)'],
+    [0.25, f'rgba({teal[0]},{teal[1]},{teal[2]},0.35)'],
+    [0.60, f'rgba({teal[0]},{teal[1]},{teal[2]},0.60)'],
+    [1.00, f'rgb({teal[0]},{teal[1]},{teal[2]})'],
+]
+colorscale_firebrick = [
+    [0.00, 'rgb(255,255,255)'],
+    [0.05, 'rgba(178,34,34,0.15)'],
+    [0.25, 'rgba(178,34,34,0.35)'],
+    [0.60, 'rgba(178,34,34,0.60)'],
+    [1.00, 'firebrick'],
+]
+
+# Hover payload
+custom = np.dstack([date_str, art_mat, km_mat, zeit_txt])
+
+# Figure with two heatmap layers
+fig_row1 = go.Figure()
+
+# Steady rows (teal)
+fig_row1.add_trace(go.Heatmap(
+    z=z_teal,
+    x=weeks, y=y_labels,
+    zmin=0, zmax=1,
+    colorscale=colorscale_teal,
+    showscale=False,
+    name="Steady",
+    customdata=custom,
+    hovertemplate=("Datum: %{customdata[0]}<br>"
+                   "Art: %{customdata[1]}<br>"
+                   "Distance: %{customdata[2]:.2f} km<br>"
+                   "Zeit: %{customdata[3]}<extra></extra>")
+))
+
+# WOD rows (firebrick)
+fig_row1.add_trace(go.Heatmap(
+    z=z_red,
+    x=weeks, y=y_labels,
+    zmin=0, zmax=1,
+    colorscale=colorscale_firebrick,
+    showscale=False,
+    name="WOD",
+    customdata=custom,
+    hovertemplate=("Datum: %{customdata[0]}<br>"
+                   "Art: %{customdata[1]}<br>"
+                   "Distance: %{customdata[2]:.2f} km<br>"
+                   "Zeit: %{customdata[3]}<extra></extra>")
+))
+
+# Month labels (first week of each month)
+week_starts = [grid_start + pd.Timedelta(days=int(w)*7) for w in weeks]
+tickvals, ticktext, prev_month = weeks, [], None
+for d in week_starts:
+    ticktext.append(d.strftime('%b') if (prev_month is None or d.month != prev_month) else '')
+    prev_month = d.month
+
+# Layout
+fig_row1.update_layout(
+    height=130,
+    width=1200,
+    plot_bgcolor="white",
+    margin=dict(l=0, r=0, b=0, t=0),
+    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0)
+)
+fig_row1.update_yaxes(autorange='reversed', showticklabels=True, showgrid=False, zeroline=False)
+fig_row1.update_xaxes(
+    tickmode='array', tickvals=tickvals, ticktext=ticktext,
+    showticklabels=True, showgrid=False, zeroline=False
+)
+
+# ---- Rowing Rolling Volume (90d & 365d) — robust full-history rolls (fig_row2) ----
+
+# 1) Clean inputs and aggregate to one row per day
+row_km = df_row[['Datum', 'KM']].copy()
+row_km['Datum'] = pd.to_datetime(row_km['Datum'], dayfirst=True, errors='coerce').dt.floor('D')
+row_km['KM']    = pd.to_numeric(row_km['KM'], errors='coerce')
+row_km = row_km.dropna(subset=['Datum'])
+row_km = row_km[row_km['Datum'] <= today]  # ignore future rows
+
+daily_row_agg = (row_km
+                 .groupby('Datum', as_index=False)['KM']
+                 .sum())
+
+if not daily_row_agg.empty:
+    # 2) Build a continuous daily index from first rowing day to today
+    full_idx_row = pd.date_range(daily_row_agg['Datum'].min().normalize(), today, freq='D')
+    daily_row = (daily_row_agg.set_index('Datum')
+                              .reindex(full_idx_row, fill_value=0.0)
+                              .rename_axis('Datum')
+                              .rename(columns={'KM': 'KM_day'}))
+
+    # 3) Rolling windows via cumulative sums (no dips)
+    daily_row['KM_cum'] = daily_row['KM_day'].cumsum()
+    daily_row['KM_roll_90']  = (daily_row['KM_cum'] - daily_row['KM_cum'].shift(90,  fill_value=0.0)).clip(lower=0)
+    daily_row['KM_roll_365'] = (daily_row['KM_cum'] - daily_row['KM_cum'].shift(365, fill_value=0.0)).clip(lower=0)
+
+    # 4) Slice display to last 365 days (rolls still from full history)
+    daily_row_365 = daily_row[daily_row.index >= (today2 - pd.Timedelta(days=365))].reset_index()
+
+# 5) Figure — fig_row2 with secondary_y=True, fig8-style
+fig_row2 = make_subplots(specs=[[{"secondary_y": True}]])
+
+# 90d rolling (left y-axis)
+fig_row2.add_trace(
+    go.Scatter(
+        x=daily_row_365['Datum'],
+        y=daily_row_365['KM_roll_90'],
+        mode='lines',
+        name='Trailing 90days km',
+        line=dict(color='firebrick', width=2),
+        hovertemplate="%{x|%Y-%m-%d}<br>Rolling 90d: %{y:.1f} km<extra></extra>",
+    ),
+    secondary_y=False
+)
+
+# 365d rolling (right y-axis)
+fig_row2.add_trace(
+    go.Scatter(
+        x=daily_row_365['Datum'],
+        y=daily_row_365['KM_roll_365'],
+        mode='lines',
+        name='Trailing 365days km',
+        line=dict(color='rgb(34, 180, 180)', width=2),
+        hovertemplate="%{x|%Y-%m-%d}<br>Rolling 365d: %{y:.1f} km<extra></extra>",
+    ),
+    secondary_y=True
+)
+
+# Layout (modern title API, no legacy titlefont)
+fig_row2.update_layout(
+    title=dict(text='Trailing 90d and 365d Rowing Volume (fig_row2)'),
+    xaxis_title='Datum',
+    xaxis=dict(showgrid=False),
+    width=650,
+    height=400,
+    legend=dict(yanchor="bottom", y=1.02, xanchor="right", x=1, orientation="h"),
+    legend_title_text=None,
+    plot_bgcolor="white",
+    hovermode='x unified',
+)
+
+# Axis titles + fonts (target axes via secondary_y)
+fig_row2.update_yaxes(
+    title_text='Trailing 90 Days',
+    title_font=dict(color="firebrick"),
+    tickfont=dict(color="firebrick"),
+    showgrid=False,
+    secondary_y=False
+)
+fig_row2.update_yaxes(
+    title_text='Trailing 365 Days',
+    title_font=dict(color="rgb(34, 180, 180)"),
+    tickfont=dict(color="rgb(34, 180, 180)"),
+    showgrid=False,
+    secondary_y=True
+)
+
+# ---- Rowing Efficiency (pwr/hr) — raw daily + 28d & 90d rolling ----
+
+df_row_eff = df_row.copy()
+df_row_eff['Datum'] = pd.to_datetime(df_row_eff['Datum'], dayfirst=True, errors='coerce')
+df_row_eff['pwr/hr'] = pd.to_numeric(df_row_eff['pwr/hr'], errors='coerce')
+
+# daily mean (if multiple sessions per day)
+daily_eff = (
+    df_row_eff
+    .dropna(subset=['Datum'])
+    .set_index('Datum')
+    .resample('D')['pwr/hr']
+    .mean()
+    .reset_index()
+)
+
+# rolling averages
+daily_eff['pwr_hr_roll_28'] = daily_eff['pwr/hr'].rolling(window=28, min_periods=1).mean()
+daily_eff['pwr_hr_roll_90'] = daily_eff['pwr/hr'].rolling(window=90, min_periods=1).mean()
+
+# filter last 365 days
+cutoff_365 = pd.Timestamp.today().normalize() - pd.Timedelta(days=365)
+daily_eff = daily_eff[daily_eff['Datum'] >= cutoff_365]
+
+# figure
+fig_row3 = go.Figure()
+
+# raw daily scatter
+fig_row3.add_trace(go.Scatter(
+    x=daily_eff['Datum'],
+    y=daily_eff['pwr/hr'],
+    mode='markers',
+    name='Daily pwr/hr',
+    marker=dict(color='rgba(34,180,180,0.7)', size=5),
+    hovertemplate="Datum: %{x|%Y-%m-%d}<br>Daily pwr/hr: %{y:.2f}<extra></extra>"
+))
+
+# 28d rolling line
+fig_row3.add_trace(go.Scatter(
+    x=daily_eff['Datum'],
+    y=daily_eff['pwr_hr_roll_28'],
+    mode='lines',
+    name='28d avg pwr/hr',
+    line=dict(color='firebrick', width=2),
+    hovertemplate="Datum: %{x|%Y-%m-%d}<br>28d avg pwr/hr: %{y:.2f}<extra></extra>"
+))
+
+# 90d rolling line
+fig_row3.add_trace(go.Scatter(
+    x=daily_eff['Datum'],
+    y=daily_eff['pwr_hr_roll_90'],
+    mode='lines',
+    name='90d avg pwr/hr',
+    line=dict(color='rgb(34, 180, 180)', width=2),
+    hovertemplate="Datum: %{x|%Y-%m-%d}<br>90d avg pwr/hr: %{y:.2f}<extra></extra>"
+))
+
+# layout
+fig_row3.update_layout(
+    title="Avg of pwr/hr",
+    height=400,
+    width=650,
     plot_bgcolor="white",
     xaxis_title=None,
     yaxis_title=None,
-    xaxis=dict(showticklabels=False, gridcolor='rgb(34, 180, 180)', gridwidth=2, tickvals=first_of_month),
-    yaxis=dict(showticklabels=False, showgrid=False, range=[0, None]),
-    margin=dict(l=0, r=0, b=0, t=0)
+    xaxis=dict(showticklabels=True, showgrid=False),
+    yaxis=dict(showticklabels=True, showgrid=False),
+    hovermode='x unified',
+    legend=dict(orientation="h", y=1.05, x=0)  # horizontal legend above
 )
-fig23.update_traces(marker_color='firebrick')
 
+# ---- Rowing Pace Benchmarks — only row20/row30/row40 (future-proof) — fig_row4 ----
+
+ALLOWED_DURATIONS = [20.0, 30.0, 40.0]  # minutes you want to track
+
+def _pace_to_seconds(x):
+    """Return pace in seconds from hh:mm:ss, mm:ss, datetime.time, timedelta, or numeric."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return float('nan')
+
+    # pandas / numpy timedeltas
+    try:
+        import pandas as _pd
+        import numpy as _np
+        if isinstance(x, (_pd.Timedelta, _np.timedelta64)):
+            return float(_pd.to_timedelta(x).total_seconds())
+    except Exception:
+        pass
+
+    # datetime types
+    import datetime as _dt
+    if isinstance(x, _dt.time):
+        return x.hour * 3600 + x.minute * 60 + x.second
+    if isinstance(x, _dt.timedelta):
+        return float(x.total_seconds())
+
+    # numeric
+    if isinstance(x, (int, float)) and np.isfinite(x):
+        return float(x)
+
+    # strings
+    s = str(x).strip().replace(',', '.')
+    if ':' in s:
+        parts = s.split(':')
+        try:
+            if len(parts) == 2:  # mm:ss(.s)
+                mm = int(parts[0]); ss = float(parts[1])
+                return mm * 60 + ss
+            if len(parts) == 3:  # hh:mm:ss(.s)
+                hh = int(parts[0]); mm = int(parts[1]); ss = float(parts[2])
+                return hh * 3600 + mm * 60 + ss
+        except Exception:
+            return float('nan')
+    return pd.to_numeric(s, errors='coerce')
+
+def _fmt_pace(seconds):
+    if pd.isna(seconds) or not np.isfinite(seconds):
+        return ''
+    seconds = int(round(float(seconds)))
+    mm = seconds // 60
+    ss = seconds % 60
+    return f"{mm:02d}:{ss:02d}"
+
+# find the pace column robustly
+def _find_pace_col(columns):
+    for c in columns:
+        s = str(c).strip().lower().replace(' ', '')
+        if s in ('pace/500m', 'pace500m', 'paceper500m', 'pace_per_500m'):
+            return c
+    for c in columns:
+        s = str(c).lower()
+        if 'pace' in s and '500' in s:
+            return c
+    return 'Pace/500m'  # fallback to your original
+
+pace_col = _find_pace_col(df_row.columns)
+
+# --- Build steady-only subset for allowed durations
+steady = df_row.copy()
+steady['Datum'] = pd.to_datetime(steady['Datum'], dayfirst=True, errors='coerce')
+steady['Art'] = steady['Art'].astype(str).fillna('').str.strip()
+
+# match 'row' + digits; extract minutes
+mask_row = steady['Art'].str.lower().str.replace(' ', '', regex=False).str.match(r'^row\d+$', na=False)
+steady = steady[mask_row].copy()
+steady['row_min'] = (
+    steady['Art'].str.replace(' ', '', regex=False).str.extract(r'row(\d+)', expand=False).astype(float)
+)
+
+# keep only 20/30/40
+steady = steady[steady['row_min'].isin(ALLOWED_DURATIONS)].copy()
+
+# pace seconds
+steady['pace_s'] = steady[pace_col].apply(_pace_to_seconds)
+steady = steady.dropna(subset=['Datum', 'pace_s', 'row_min'])
+steady = steady[np.isfinite(steady['pace_s'])].sort_values('Datum')
+
+# 28D time-based rolling per allowed duration
+roll_list = []
+for dur, sub in steady.groupby('row_min', sort=True):
+    g = sub.set_index('Datum').sort_index()
+    g['pace_roll_28'] = g['pace_s'].rolling('28D', min_periods=1).mean()
+    g['row_min'] = dur
+    roll_list.append(g.reset_index())
+steady_roll = pd.concat(roll_list, ignore_index=True) if roll_list else steady.iloc[0:0].copy()
+
+# legend labels and dash styles (stable over time)
+name_map = {20.0: 'row20', 30.0: 'row30', 40.0: 'row40'}
+dash_cycle = {20.0: 'solid', 30.0: 'dash', 40.0: 'dot'}
+
+# --- Figure
+fig_row4 = go.Figure()
+
+# Raw daily scatter (teal) for allowed durations only
+fig_row4.add_trace(go.Scatter(
+    x=steady['Datum'],
+    y=steady['pace_s'],
+    mode='markers',
+    name='Daily pace/500m',
+    marker=dict(color='rgba(34,180,180,0.7)', size=5),
+    hovertemplate=(
+        "Datum: %{x|%Y-%m-%d}<br>"
+        "Art: %{customdata}<br>"
+        "Pace/500m: %{{y:.0f}}s (%{{text}})<extra></extra>"
+    ),
+    customdata=steady['Art'].str.replace(' ', '', regex=False),
+    text=steady['pace_s'].apply(_fmt_pace)
+))
+
+# Rolling 28d lines (firebrick) for each allowed duration
+plotted = set()
+for dur, sub in steady_roll.groupby('row_min', sort=True):
+    label = name_map.get(dur, f"row{int(dur)}")
+    fig_row4.add_trace(go.Scatter(
+        x=sub['Datum'],
+        y=sub['pace_roll_28'],
+        mode='lines',
+        name=f"28d avg {label}",
+        line=dict(color='firebrick', width=2, dash=dash_cycle.get(dur, 'solid')),
+        hovertemplate=(
+            "Datum: %{x|%Y-%m-%d}<br>"
+            f"28d avg pace ({label}): %{{y:.0f}}s (%{{text}})<extra></extra>"
+        ),
+        text=sub['pace_roll_28'].apply(_fmt_pace)
+    ))
+    plotted.add(dur)
+
+# Add empty legend entries for durations not present yet (keeps legend stable for the future)
+for dur in ALLOWED_DURATIONS:
+    if dur not in plotted:
+        label = name_map[dur]
+        fig_row4.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode='lines',
+            name=f"28d avg {label}",
+            line=dict(color='firebrick', width=2, dash=dash_cycle[dur]),
+            hoverinfo='skip',
+            showlegend=True
+        ))
+
+# Layout (your style)
+fig_row4.update_layout(
+    title="Pace/500m — row20, row30, row40 (daily & 28d avg)",
+    height=400,
+    width=650,
+    plot_bgcolor="white",
+    xaxis_title=None,
+    yaxis_title=None,
+    xaxis=dict(showticklabels=True, showgrid=False),
+    yaxis=dict(showticklabels=True, showgrid=False),
+    hovermode='x unified',
+    legend=dict(orientation="h", y=1.05, x=0)
+)
+
+# Invert Y so faster = higher
+fig_row4.update_yaxes(autorange="reversed")
+
+# Pretty y ticks in mm:ss (based on available points)
+if len(steady):
+    ymin = int(np.nanmin(steady['pace_s']))
+    ymax = int(np.nanmax(steady['pace_s']))
+    lo = int(5 * round(ymin / 5))
+    hi = int(5 * round(max(ymax, ymin + 10) / 5))
+    ticks = np.linspace(lo, hi, 5).astype(int)
+    fig_row4.update_yaxes(
+        tickmode='array',
+        tickvals=ticks.tolist(),
+        ticktext=[_fmt_pace(t) for t in ticks.tolist()]
+    )
+
+# ---- Weekly Aerobic Load (Running + Rowing, minutes, last 365 days, Mon–Sun) — fig_row4 ----
+
+def _to_minutes(x):
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return float('nan')
+    if isinstance(x, (int, float)):
+        return float(x)
+    if hasattr(x, 'hour') and hasattr(x, 'minute'):
+        sec = getattr(x, 'second', 0)
+        return x.hour*60 + x.minute + sec/60
+    if hasattr(x, 'total_seconds'):
+        try:
+            return float(x.total_seconds())/60.0
+        except Exception:
+            pass
+    s = str(x).strip().replace(',', '.')
+    if ':' in s:
+        parts = s.split(':')
+        try:
+            if len(parts) == 2:
+                m, sec = parts
+                return int(m) + float(sec)/60.0
+            if len(parts) == 3:
+                h, m, sec = parts
+                return int(h)*60 + int(m) + float(sec)/60.0
+        except Exception:
+            return pd.to_numeric(s, errors='coerce')
+    return pd.to_numeric(s, errors='coerce')
+
+def _week_range_str(week_start):
+    ws = pd.Timestamp(week_start).normalize()
+    we = ws + pd.Timedelta(days=6)
+    return f"{ws:%Y-%m-%d} → {we:%Y-%m-%d}"
+
+# === PREP: make sure inputs exist and have expected columns ===
+required_run_cols = {'Datum', 'Zeit'}
+required_row_cols = {'Datum'}  # Zeit or Zeit_min handled below
+
+if not required_run_cols.issubset(df.columns):
+    raise ValueError(f"df is missing columns: {required_run_cols - set(df.columns)}")
+if not required_row_cols.issubset(df_row.columns):
+    raise ValueError(f"df_row is missing columns: {required_row_cols - set(df_row.columns)}")
+
+# === BUILD 'run' with parsed minutes ===
+run = df.copy()
+run['Datum'] = pd.to_datetime(run['Datum'], dayfirst=True, errors='coerce')
+run['run_min'] = run['Zeit'].apply(_to_minutes)
+
+# === BUILD 'row' with parsed minutes ===
+row = df_row.copy()
+row['Datum'] = pd.to_datetime(row['Datum'], dayfirst=True, errors='coerce')
+if 'Zeit_min' in row.columns:
+    row['row_min'] = pd.to_numeric(row['Zeit_min'], errors='coerce')
+else:
+    # falls back to 'Zeit' like running
+    if 'Zeit' not in row.columns:
+        raise ValueError("df_row needs either 'Zeit_min' or 'Zeit' to compute rowing minutes.")
+    row['row_min'] = row['Zeit'].apply(_to_minutes)
+
+# === WEEKLY (Mon..Sun) with correct binning (label = Monday) ===
+run_week = (run.dropna(subset=['Datum'])
+              .set_index('Datum')
+              .assign(run_min=lambda d: pd.to_numeric(d['run_min'], errors='coerce').fillna(0.0))
+              .resample('W-MON', label='left', closed='left')['run_min'].sum()
+              .rename('Running')
+              .to_frame())
+
+row_week = (row.dropna(subset=['Datum'])
+              .set_index('Datum')
+              .assign(row_min=lambda d: pd.to_numeric(d['row_min'], errors='coerce').fillna(0.0))
+              .resample('W-MON', label='left', closed='left')['row_min'].sum()
+              .rename('Rowing')
+              .to_frame())
+
+# --- Combine and restrict to last 365 days ---
+both = run_week.join(row_week, how='outer').fillna(0.0)
+
+today = pd.Timestamp.today().normalize()
+latest_monday = today - pd.Timedelta(days=today.weekday())  # Monday of this week
+
+end_wk = latest_monday
+start_wk = (end_wk - pd.Timedelta(days=364)).normalize()
+
+grid_start = start_wk  # already a Monday after resample
+all_weeks = pd.date_range(start=grid_start, end=end_wk, freq='W-MON')
+
+wide = (pd.DataFrame(index=all_weeks)
+        .join(both, how='left')
+        .fillna(0.0)
+        .rename_axis('week_start')
+        .reset_index())
+
+wide['Total'] = wide['Running'] + wide['Rowing']
+wide['WeekLabel'] = wide['week_start'].apply(_week_range_str)
+
+# --- Figure ---
+fig_row5 = go.Figure()
+
+# Running = firebrick
+fig_row5.add_trace(go.Bar(
+    x=wide['week_start'],
+    y=wide['Running'],
+    name='Running',
+    marker=dict(color='firebrick'),
+    customdata=np.stack([wide['WeekLabel'], wide['Total']], axis=1),
+    hovertemplate=("Week: %{customdata[0]}<br>"
+                   "Running: %{y:.0f} min<br>"
+                   "Total: %{customdata[1]:.0f} min<extra></extra>")
+))
+
+# Rowing = teal
+fig_row5.add_trace(go.Bar(
+    x=wide['week_start'],
+    y=wide['Rowing'],
+    name='Rowing',
+    marker=dict(color='rgb(34,180,180)'),
+    customdata=np.stack([wide['WeekLabel'], wide['Total']], axis=1),
+    hovertemplate=("Week: %{customdata[0]}<br>"
+                   "Rowing: %{y:.0f} min<br>"
+                   "Total: %{customdata[1]:.0f} min<extra></extra>")
+))
+
+fig_row5.update_layout(
+    title="Weekly Aerobic Load (Running + Rowing, minutes, last 365 days)",
+    height=400,
+    width=650,
+    barmode='stack',
+    plot_bgcolor="white",
+    xaxis_title=None,
+    yaxis_title=None,
+    xaxis=dict(showticklabels=True, showgrid=False),
+    yaxis=dict(showticklabels=True, showgrid=False),
+    hovermode='x unified',
+    legend=dict(orientation="h", y=1.05, x=0)
+)
+
+
+# Make changes to all figures
+_ALL_FIGS = [
+    fig1, fig2, fig3, fig5, fig6, fig8, fig9, fig11, fig13, fig14, fig15, fig16, fig17, fig18, fig_row2, fig_row3, fig_row4, fig_row5
+]
+
+for _f in _ALL_FIGS:
+    _f.update_layout(
+        xaxis_title=None,
+        width=650,  # Set the width of the graph
+        height=400  # Set the height of the graph
+    )
 
 # DASHBOARD
 
@@ -688,7 +1679,7 @@ dcc.Tab(label='Important Values', children=[
         children=[
             dcc.Graph(figure=fig23, config={'displayModeBar': False})
         ],
-        style={'display':'inline-block', 'width':'1240px', 'padding-top':'10px', 'padding-bottom':'10px', 'margin': '10px', 'margin-top': '20px'},
+        style={'display':'inline-block', 'width':'1200px', 'padding-top':'10px', 'padding-bottom':'10px', 'padding-left':'20px', 'margin': '10px', 'margin-top': '20px'},
     ),
         
     html.Div(
@@ -847,10 +1838,17 @@ html.Div(
 
             html.P(children=[
                 html.Span(html.B("90d running volume:"), style={'display': 'inline-block', 'width': '200px'}),
-                html.Span([f"{cumulative_sum_90_today}"], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span([f"{cumulative_sum_90_today} km"], style={'display': 'inline-block', 'width': '150px'}),
                 html.Span(html.B("365d running volume:"), style={'display': 'inline-block', 'width': '200px'}),
-                html.Span([f"{cumulative_sum_365_today}"], style={'display': 'inline-block', 'width': '150px'})
-            ], style={'display': 'flex', 'align-items': 'baseline'}),     
+                html.Span([f"{cumulative_sum_365_today} km"], style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),
+
+            html.P(children=[
+                html.Span(html.B("90d rowing volume:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{row_vol_90} km"], style={'display': 'inline-block', 'width': '150px'}),
+                html.Span(html.B("365d rowing volume:"), style={'display': 'inline-block', 'width': '200px'}),
+                html.Span([f"{row_vol_365} km"], style={'display': 'inline-block', 'width': '150px'})
+            ], style={'display': 'flex', 'align-items': 'baseline'}),       
 
         ],
         style={'width':'590px','border': '1px solid black', 'padding-left': '10px', 'padding-right': '10px', 'margin':'10px', 'background-color': 'rgba(178, 34, 34, 0.4)'}  # Adjust width as needed
@@ -949,13 +1947,36 @@ dcc.Tab(label=f'{current_year}', children=[
     ], style={'display': 'flex'}),  
         ]),
 
-# Tab 5 - Peaks Map
+# Tab 5 - Rowing Values
+dcc.Tab(label='Rowing Figures', children=[
+        html.Div(
+        children=[
+            dcc.Graph(figure=fig_row1, config={'displayModeBar': False})
+        ],
+        style={'display':'inline-block', 'width':'1200px', 'padding-top':'10px', 'padding-bottom':'10px', 'padding-left':'20px', 'margin': '10px', 'margin-top': '20px'},
+    ),
+        html.Div([
+            # CTL copmarison
+            html.Div(dcc.Graph(figure=fig_row2, config={'displayModeBar': False})),
+            # load comparison
+            html.Div(dcc.Graph(figure=fig_row3, config={'displayModeBar': False})),
+        ], style={'display': 'flex'}),  
+        html.Div([
+            # CTL copmarison
+            html.Div(dcc.Graph(figure=fig_row4, config={'displayModeBar': False})),
+            # load comparison
+            html.Div(dcc.Graph(figure=fig_row5, config={'displayModeBar': False})),
+        ], style={'display': 'flex'}),   
+        ]),
+
+# Tab 6 - Peaks Map
         dcc.Tab(label='Peaks Map', children=[
             html.Div([
                 html.Iframe(
                     srcDoc=open('../peaks_projekt/Peaks_Map/peaks_progress.html', 'r').read(),
-                    width='100%',
+                    width='1200px',
                     height='650px',
+                    style={'margin': '20px', 'border':'1px'},
                 ),
             ]),
             html.Div(
@@ -985,7 +2006,4 @@ dcc.Tab(label=f'{current_year}', children=[
 ])    
 
 if __name__ == '__main__':
-    app.run(debug=True)
-
-#if __name__ == "__main__":
-#    app.run_server(debug=True, host='0.0.0.0', port=8050)
+    app.run(debug=True, use_reloader=False)
