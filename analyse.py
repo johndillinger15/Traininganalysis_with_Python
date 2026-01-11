@@ -314,7 +314,7 @@ YTD_HM_data = int(round(df_ytd['HM'].sum()))
 
 # Rounding total sum of KM with kids
 rounded_sum_kids = int(round(km_sum_kids_j['KM'].iloc[-1],0))
-rounded_ytd_km_sum_kids_j = int(round(ytd_km_sum_kids_j['KM'].iloc[-1],0))
+rounded_ytd_km_sum_kids_j = int(round(ytd_km_sum_kids_j['KM'].sum(), 0))
 
 # Calculate running times
 # Distances in meters
@@ -1656,6 +1656,200 @@ fig_row5.update_layout(
     legend=dict(orientation="h", y=1.05, x=0)
 )
 
+###
+# Rowing Best Times (exact test distances + PB delta)
+###
+
+# --- 1) Working copy ---
+row_bt = df_row.copy()
+
+# --- 2) Normalize fields ---
+row_bt['Datum'] = pd.to_datetime(row_bt['Datum'], dayfirst=True, errors='coerce')
+row_bt['Zeit_min'] = pd.to_numeric(row_bt['Zeit_min'], errors='coerce')
+
+row_bt['art_norm'] = (
+    row_bt['Art']
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .str.replace(' ', '', regex=False)
+)
+
+# --- 3) Valid test workouts and exact distances ---
+VALID_TESTS = {
+    'row1k': 1000,
+    'row2k': 2000,
+    'row5k': 5000,
+    'row10k': 10000,
+    'rowhw': 21097.5,
+    'rowm': 42195,
+}
+
+DIST_ORDER = [
+    'row1k',
+    'row2k',
+    'row5k',
+    'row10k',
+    'rowhw',
+    'rowm',
+]
+
+LABELS = {
+    'row1k': '1 km',
+    'row2k': '2 km',
+    'row5k': '5 km',
+    'row10k': '10 km',
+    'rowhw': 'Half Marathon',
+    'rowm': 'Marathon',
+}
+
+# keep only exact test workouts
+row_bt = row_bt[row_bt['art_norm'].isin(VALID_TESTS)].copy()
+
+# --- 4) Map target distance + pace ---
+row_bt['target_m'] = row_bt['art_norm'].map(VALID_TESTS)
+row_bt['pace_s'] = row_bt['Zeit_min'] * 60 / (row_bt['target_m'] / 500)
+
+row_bt = row_bt.dropna(subset=['Datum', 'Zeit_min', 'pace_s'])
+
+# --- 5) Compute PB + delta vs previous PB ---
+best_rows = []
+
+for art in DIST_ORDER:
+    sub = row_bt[row_bt['art_norm'] == art].sort_values('Datum')
+    if sub.empty:
+        continue
+
+    # best (fastest)
+    best = sub.loc[sub['pace_s'].idxmin()]
+
+    # previous best BEFORE this PB
+    before = sub[sub['Datum'] < best['Datum']]
+    if not before.empty:
+        prev_best = before['pace_s'].min()
+        delta_s = best['pace_s'] - prev_best   # negative = improvement
+    else:
+        delta_s = None
+
+    best_rows.append({
+        'Distanz': LABELS[art],
+        'Zeit': best['Zeit'],
+        'Pace /500m': _fmt_pace(best['pace_s']),
+        'Δ vs prev (s)': f"{int(round(delta_s)):+d}" if delta_s is not None else '',
+        'Datum': best['Datum'].strftime('%Y-%m-%d'),
+        'Workout': best['Art'],
+        'Watt': round(best['Watt'], 0) if 'Watt' in best and pd.notna(best['Watt']) else None,
+        '_order': DIST_ORDER.index(art),
+        '_delta_raw': delta_s,
+    })
+
+# --- 6) Final table (sorted) ---
+best_table = (
+    pd.DataFrame(best_rows)
+    .sort_values('_order')
+    .drop(columns=['_order'])
+)
+
+# --- 7) Dash DataTable ---
+table_best = dash_table.DataTable(
+    data=best_table.drop(columns=['_delta_raw']).to_dict("records"),
+    columns=[{"name": c, "id": c} for c in best_table.columns if c != '_delta_raw'],
+    style_cell={
+        "textAlign": "center",
+        "padding": "6px",
+        "fontFamily": "monospace",
+        "fontSize": "13px",
+        "border": "none",
+    },
+    style_header={
+        "fontWeight": "600",
+        "borderBottom": "1px solid #ddd",
+        "backgroundColor": "white",
+    },
+    style_data_conditional=[
+        # alternating rows
+        {
+            "if": {"row_index": "odd"},
+            "backgroundColor": "#fafafa",
+        },
+        # --- Highlight 2k ---
+        {
+        "if": {"filter_query": "{Distanz} = '2 km'"},
+        "backgroundColor": "rgba(178,34,34,0.08)",
+        "borderLeft": "4px solid firebrick",
+        "fontWeight": "600",
+    },
+        # PB improvement (negative delta = faster)
+        {
+            "if": {
+                "filter_query": "{Δ vs prev (s)} contains '-'",
+                "column_id": "Δ vs prev (s)",
+            },
+            "color": "firebrick",
+            "fontWeight": "600",
+        },
+    ],
+)
+
+def derived_from_2k(pace_2k):
+    return {
+        "5k Pace": (_fmt_pace(pace_2k + 20), _fmt_pace(pace_2k + 22)),
+        "10k Pace": (_fmt_pace(pace_2k + 25), _fmt_pace(pace_2k + 30)),
+        "Steady": (_fmt_pace(pace_2k + 35), _fmt_pace(pace_2k + 45)),
+        "Threshold": (_fmt_pace(pace_2k + 20), _fmt_pace(pace_2k + 25)),
+        "VO2max": (_fmt_pace(pace_2k + 5), _fmt_pace(pace_2k + 10)),
+    }
+
+def age_class_2k_label(pace_s):
+    total_2k = pace_s * 4  # Sekunden
+    if total_2k < 420: return "Elite"
+    if total_2k < 450: return "Sehr gut"
+    if total_2k < 480: return "Gut"
+    if total_2k < 510: return "Trainiert"
+    return "Freizeit"
+
+row2k = row_bt[row_bt['art_norm'] == 'row2k']
+
+best_2k = None
+derived = None
+
+if not row2k.empty:
+    best_2k = row2k.loc[row2k['pace_s'].idxmin()]
+    derived = derived_from_2k(best_2k['pace_s'])
+
+two_k_card = None
+
+if best_2k is not None:
+    two_k_card = html.Div(
+        children=[
+            html.H4("2k Summary (Reference)", style={'marginBottom': '12px'}),
+
+            html.P(f"Age Group: Men 40–44"),
+            html.P(f"2k Pace: {_fmt_pace(best_2k['pace_s'])} /500m"),
+            html.P(f"Classification: {age_class_2k_label(best_2k['pace_s'])}"),
+
+            html.Hr(),
+
+            html.P("Derived Targets:", style={'fontWeight': '600'}),
+            html.Ul([
+                html.Li(f"5k Pace: {derived['5k Pace'][0]} – {derived['5k Pace'][1]}"),
+                html.Li(f"10k Pace: {derived['10k Pace'][0]} – {derived['10k Pace'][1]}"),
+                html.Li(f"Steady: {derived['Steady'][0]} – {derived['Steady'][1]}"),
+                html.Li(f"Threshold: {derived['Threshold'][0]} – {derived['Threshold'][1]}"),
+                html.Li(f"VO₂max: {derived['VO2max'][0]} – {derived['VO2max'][1]}"),
+            ]),
+        ],
+        style={
+            'margin': '20px',
+            'padding': '16px 20px 24px 20px',
+            'backgroundColor': 'white',
+            'border': '1px solid #e6e6e6',
+            'borderRadius': '6px',
+            'width': '650px',
+        }
+    )
+
+
 
 # Make changes to all figures
 _ALL_FIGS = [
@@ -1880,12 +2074,12 @@ html.Div(
         },
         style_data_conditional=[
             {
-                'if': {'column_id': 'KM', 'filter_query': '{KM} > 750'},
+                'if': {'column_id': 'KM', 'filter_query': '{KM} > 800'},
                 'backgroundColor': 'red',
                 'color': 'white',
             },
             {
-                'if': {'column_id': 'KM', 'filter_query': '{KM} > 500 and {KM} <= 750'},
+                'if': {'column_id': 'KM', 'filter_query': '{KM} > 500 and {KM} <= 800'},
                 'backgroundColor': 'yellow',
             },
         ],),
@@ -1948,26 +2142,103 @@ dcc.Tab(label=f'{current_year}', children=[
         ]),
 
 # Tab 5 - Rowing Values
-dcc.Tab(label='Rowing Figures', children=[
+dcc.Tab(
+    label='Rowing Figures',
+    children=[
+
+        # --- Calendar heatmap ---
         html.Div(
-        children=[
-            dcc.Graph(figure=fig_row1, config={'displayModeBar': False})
-        ],
-        style={'display':'inline-block', 'width':'1200px', 'padding-top':'10px', 'padding-bottom':'10px', 'padding-left':'20px', 'margin': '10px', 'margin-top': '20px'},
-    ),
-        html.Div([
-            # CTL copmarison
-            html.Div(dcc.Graph(figure=fig_row2, config={'displayModeBar': False})),
-            # load comparison
-            html.Div(dcc.Graph(figure=fig_row3, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),  
-        html.Div([
-            # CTL copmarison
-            html.Div(dcc.Graph(figure=fig_row4, config={'displayModeBar': False})),
-            # load comparison
-            html.Div(dcc.Graph(figure=fig_row5, config={'displayModeBar': False})),
-        ], style={'display': 'flex'}),   
-        ]),
+            children=[
+                dcc.Graph(
+                    figure=fig_row1,
+                    config={'displayModeBar': False}
+                )
+            ],
+            style={
+                'display': 'inline-block',
+                'width': '1200px',
+                'paddingTop': '10px',
+                'paddingBottom': '10px',
+                'paddingLeft': '20px',
+                'margin': '10px',
+                'marginTop': '20px',
+            },
+        ),
+
+        # --- Row 1: rolling volume + efficiency ---
+        html.Div(
+            children=[
+                html.Div(
+                    dcc.Graph(
+                        figure=fig_row2,
+                        config={'displayModeBar': False}
+                    )
+                ),
+                html.Div(
+                    dcc.Graph(
+                        figure=fig_row3,
+                        config={'displayModeBar': False}
+                    )
+                ),
+            ],
+            style={'display': 'flex'},
+        ),
+
+        # --- Row 2: pace benchmarks + weekly load ---
+        html.Div(
+            children=[
+                html.Div(
+                    dcc.Graph(
+                        figure=fig_row4,
+                        config={'displayModeBar': False}
+                    )
+                ),
+                html.Div(
+                    dcc.Graph(
+                        figure=fig_row5,
+                        config={'displayModeBar': False}
+                    )
+                ),
+            ],
+            style={'display': 'flex'},
+        ),
+
+        # --- Best distances table ---
+        html.Div(
+            children=[
+                html.H4(
+                    "Rowing Best Distances",
+                    style={'marginBottom': '12px'},
+                ),
+                table_best,
+            ],
+            style={
+                # outer spacing
+                'margin': '20px',
+                'marginBottom': '80px',
+
+                # inner spacing (prevents edge sticking)
+                'padding': '16px 20px 24px 20px',
+
+                # card look
+                'backgroundColor': 'white',
+                'border': '1px solid #e6e6e6',
+                'borderRadius': '6px',
+
+                # avoid visual clipping at bottom
+                'minHeight': 'fit-content',
+            },
+        ),
+
+        # --- 2k summary card ---
+        html.Div(
+            children=[two_k_card],
+            style={'display': 'flex'},
+        ),
+
+    ],
+),
+
 
 # Tab 6 - Peaks Map
         dcc.Tab(label='Peaks Map', children=[
